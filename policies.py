@@ -448,7 +448,7 @@ class MotionPlannerPolicy(Policy):
                     end_effector_offset = self.get_end_effector_offset(self.current_command['primitive_name'])
                     diff = abs(end_effector_offset - distance_to_target)
                     print(f"Distance to target EE: {distance_to_target:.3f}, EE offset: {end_effector_offset:.3f}, diff: {diff:.3f}")
-                    if diff < 0.002:  # 2 cm tolerance (reduced from 10 cm)
+                    if diff < 0.002:  # 0.2 cm tolerance (reduced from 10 cm)
                         self.state = 'manipulating'
                         print("Base reached target, starting arm manipulation")
                     else:
