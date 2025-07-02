@@ -1,0 +1,11 @@
+<mujocoinclude>
+    <asset>
+        <texture name="T_cube" type="cube" file="textures/wood1.png" width="1" height="1"/>
+        <material name="M_cube" texture="T_cube" texrepeat="3 3" reflectance="0.7" shininess="0.4" texuniform="false"/>
+    </asset>
+    <default>
+        <default class="cube">
+            <geom type="box" size="0.05 0.05 0.05" material="M_cube" condim="3" solimp=".9 .95 .001" solref=".02 1" friction="1 0.1 0.02" mass="0.1"/>
+        </default>
+    </default>
+</mujocoinclude> 

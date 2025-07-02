@@ -6,7 +6,7 @@ import time
 from itertools import count
 from constants import POLICY_CONTROL_PERIOD
 from episode_storage import EpisodeWriter
-from policies import TeleopPolicy, RemotePolicy, MotionPlannerPolicy
+from policies import TeleopPolicy, RemotePolicy, MotionPlannerPolicy, TopGraspPolicy
 
 def should_save_episode(writer):
     if len(writer) == 0:
@@ -93,7 +93,9 @@ def main(args):
         env = RealEnv()
 
     # Create policy
-    if args.motion_planner:
+    if args.top_grasp:
+        policy = TopGraspPolicy()
+    elif args.motion_planner:
         policy = MotionPlannerPolicy()
     elif args.teleop:
         policy = TeleopPolicy()
@@ -112,6 +114,7 @@ if __name__ == '__main__':
     parser.add_argument('--sim', action='store_true')
     parser.add_argument('--teleop', action='store_true')
     parser.add_argument('--motion_planner', action='store_true')
+    parser.add_argument('--top_grasp', action='store_true')
     parser.add_argument('--save', action='store_true')
     parser.add_argument('--output-dir', default='data/demos')
     main(parser.parse_args())

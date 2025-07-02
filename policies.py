@@ -850,8 +850,6 @@ class MotionPlannerPolicy(Policy):
         
         return detected_objects
 
-
-
     def search_for_objects(self, obs):
         """Search behavior when no objects are detected"""
         base_pose = obs['base_pose']
@@ -911,6 +909,396 @@ class MotionPlannerPolicy(Policy):
         else:
             # Base is too close to target end effector position and needs to back up
             print('Warning: Base needs to deviate from commanded path to reach target position, watch out for potential collisions')
+            curr_position = command['waypoints'][0]
+            signed_dist = self.distance(curr_position, target_ee_pos) - end_effector_offset
+            dx = target_ee_pos[0] - curr_position[0]
+            dy = target_ee_pos[1] - curr_position[1]
+            target_heading = self.restrict_heading_range(math.atan2(dy, dx))
+            target_position = (curr_position[0] + signed_dist * math.cos(target_heading), curr_position[1] + signed_dist * math.sin(target_heading))
+            waypoints = [curr_position, target_position]
+            
+        return {'waypoints': waypoints, 'target_ee_pos': target_ee_pos}
+
+
+class TopGraspPolicy(Policy):
+    def __init__(self):
+        # Motion planning state
+        self.state = 'idle'  # States: idle, moving, opening_cabinet, grasping
+        self.base_waypoints = []
+        self.current_waypoint_idx = 0
+        self.target_ee_pos = None
+        self.grasp_step = 0  # 0: position arm above, 1: move down, 2: grasp, 3: lift
+        self.cabinet_step = 0  # 0: approach cabinet, 1: open doors
+        
+        # Base following parameters
+        self.LOOKAHEAD_DISTANCE = 0.3
+        self.lookahead_position = None
+        self.position_tolerance = 0.005
+        self.heading_tolerance = math.radians(2.1)
+        
+        # Object location
+        self.object_location = None
+        
+        self.enabled = True
+        self.episode_ended = False
+        
+        print(f'TopGraspPolicy initialized - ready to start automatically')
+
+    def reset(self):
+        self.state = 'idle'
+        self.base_waypoints = []
+        self.current_waypoint_idx = 0
+        self.target_ee_pos = None
+        self.lookahead_position = None
+        self.episode_ended = False
+        self.grasp_step = 0
+        self.cabinet_step = 0
+        self.object_location = None
+        self.enabled = True
+        
+        print("TopGraspPolicy reset - starting episode automatically")
+
+    def step(self, obs):
+        if self.episode_ended or not self.enabled:
+            return None
+
+        return self._step(obs)
+
+    def _step(self, obs):
+        base_pose = obs['base_pose']
+        arm_pos = obs['arm_pos']
+        gripper_pos = obs['gripper_pos']
+
+        if self.state == 'idle':
+            if 'cube1_pos' in obs:
+                self.object_location = obs['cube1_pos'].copy()
+                print(f"Cube1 detected at: {self.object_location}")
+
+                # First, move to the cabinet to open it
+                cabinet_command = {
+                    'primitive_name': 'pick',
+                    'waypoints': [base_pose[:2].tolist(), [1.0, -0.5]]  # Position in front of cabinet doors
+                }
+                
+                base_command = self.build_base_command(cabinet_command)
+                if base_command:
+                    self.base_waypoints = base_command['waypoints']
+                    self.target_ee_pos = base_command['target_ee_pos']
+                    self.current_waypoint_idx = 1
+                    self.lookahead_position = None
+                    self.state = 'moving'
+                    print(f"Starting base movement to cabinet for opening.")
+                else:
+                    print("Failed to build base command")
+            else:
+                return self.search_for_objects(obs)
+                
+        elif self.state == 'moving':
+            action = self.execute_base_movement(obs)
+            if action is None:
+                print("Base movement complete! Starting cabinet opening.")
+                self.state = 'opening_cabinet'
+                self.cabinet_step = 0
+            return action
+            
+        elif self.state == 'opening_cabinet':
+            return self.open_cabinet_doors(obs)
+            
+        elif self.state == 'grasping':
+            object_3d_pos = self.object_location
+            
+            # Calculate position relative to base
+            global_diff_approach = np.array([
+                object_3d_pos[0] - base_pose[0],
+                object_3d_pos[1] - base_pose[1], 
+                object_3d_pos[2] + 0.20 - self.get_base_height()
+            ])
+            
+            base_angle = base_pose[2]
+            cos_angle = math.cos(-base_angle)
+            sin_angle = math.sin(-base_angle)
+            
+            object_relative_pos_approach = np.array([
+                cos_angle * global_diff_approach[0] - sin_angle * global_diff_approach[1],
+                sin_angle * global_diff_approach[0] + cos_angle * global_diff_approach[1],
+                global_diff_approach[2]
+            ])
+            
+            if self.grasp_step == 0:
+                # Step 0: Position arm above object with open gripper
+                action = self.create_arm_action(base_pose, object_relative_pos_approach, gripper_pos=np.array([0.0]))
+                if np.allclose(arm_pos, object_relative_pos_approach, atol=0.03):
+                    self.grasp_step = 1
+                return action
+            
+            elif self.grasp_step == 1:
+                # Step 1: Lower gripper to grasp position
+                grasp_pos = object_relative_pos_approach.copy()
+                grasp_pos[2] -= 0.15 # lower by 15cm
+                action = self.create_arm_action(base_pose, grasp_pos, gripper_pos=np.array([0.0]))
+                if np.allclose(arm_pos, grasp_pos, atol=0.02):
+                    self.grasp_step = 2
+                return action
+            
+            elif self.grasp_step == 2:
+                # Step 2: Close gripper
+                grasp_pos = object_relative_pos_approach.copy()
+                grasp_pos[2] -= 0.15
+                action = self.create_arm_action(base_pose, grasp_pos, gripper_pos=np.array([1.0]))
+                if gripper_pos[0] > 0.8:
+                    self.grasp_step = 3
+                return action
+
+            elif self.grasp_step == 3:
+                # Step 3: Lift object
+                lifted_pos = object_relative_pos_approach.copy()
+                action = self.create_arm_action(base_pose, lifted_pos, gripper_pos=np.array([1.0]))
+                if np.allclose(arm_pos, lifted_pos, atol=0.05):
+                    print("Grasp and lift successful! Episode ended.")
+                    self.episode_ended = True
+                return action
+
+        # Default action
+        return {
+            'base_pose': base_pose.copy(),
+            'arm_pos': arm_pos.copy(),
+            'arm_quat': obs['arm_quat'].copy(),
+            'gripper_pos': gripper_pos.copy(),
+        }
+
+    def open_cabinet_doors(self, obs):
+        """Open the cabinet doors by controlling the arm to grab and pull the door handles"""
+        base_pose = obs['base_pose']
+        arm_pos = obs['arm_pos']
+        gripper_pos = obs['gripper_pos']
+        
+        if self.cabinet_step == 0:
+            # Step 0: Position arm near the right door handle
+            # Door handle is approximately at the cabinet position with some offset
+            door_handle_global = np.array([1.0 + 0.3, -0.3, 0.45])  # Approximate right door handle position
+            
+            global_diff = np.array([
+                door_handle_global[0] - base_pose[0],
+                door_handle_global[1] - base_pose[1], 
+                door_handle_global[2] - self.get_base_height()
+            ])
+            
+            base_angle = base_pose[2]
+            cos_angle = math.cos(-base_angle)
+            sin_angle = math.sin(-base_angle)
+            
+            door_relative_pos = np.array([
+                cos_angle * global_diff[0] - sin_angle * global_diff[1],
+                sin_angle * global_diff[0] + cos_angle * global_diff[1],
+                global_diff[2]
+            ])
+            
+            action = self.create_arm_action(base_pose, door_relative_pos, gripper_pos=np.array([0.0]))
+            print(f"Cabinet step 0: Moving arm to door handle at {door_relative_pos}")
+            
+            if np.allclose(arm_pos, door_relative_pos, atol=0.05):
+                self.cabinet_step = 1
+                print("Arm positioned at door handle, closing gripper")
+            return action
+        
+        elif self.cabinet_step == 1:
+            # Step 1: Close gripper on door handle
+            door_handle_global = np.array([1.0 + 0.3, -0.3, 0.45])
+            
+            global_diff = np.array([
+                door_handle_global[0] - base_pose[0],
+                door_handle_global[1] - base_pose[1], 
+                door_handle_global[2] - self.get_base_height()
+            ])
+            
+            base_angle = base_pose[2]
+            cos_angle = math.cos(-base_angle)
+            sin_angle = math.sin(-base_angle)
+            
+            door_relative_pos = np.array([
+                cos_angle * global_diff[0] - sin_angle * global_diff[1],
+                sin_angle * global_diff[0] + cos_angle * global_diff[1],
+                global_diff[2]
+            ])
+            
+            action = self.create_arm_action(base_pose, door_relative_pos, gripper_pos=np.array([1.0]))
+            print(f"Cabinet step 1: Closing gripper on door handle")
+            
+            if gripper_pos[0] > 0.7:
+                self.cabinet_step = 2
+                print("Gripper closed on door handle, pulling door open")
+            return action
+        
+        elif self.cabinet_step == 2:
+            # Step 2: Pull the door open by moving arm in an arc
+            # Move the arm to simulate pulling the door open
+            door_open_pos = np.array([0.4, -0.2, 0.0])  # Pull the door towards the robot
+            
+            action = self.create_arm_action(base_pose, door_open_pos, gripper_pos=np.array([1.0]))
+            print(f"Cabinet step 2: Pulling door open")
+            
+            if np.allclose(arm_pos, door_open_pos, atol=0.05):
+                self.cabinet_step = 3
+                print("Door opened, releasing handle")
+            return action
+        
+        elif self.cabinet_step == 3:
+            # Step 3: Release the door handle and move to grasping position
+            door_open_pos = np.array([0.4, -0.2, 0.0])
+            
+            action = self.create_arm_action(base_pose, door_open_pos, gripper_pos=np.array([0.0]))
+            print(f"Cabinet step 3: Releasing door handle")
+            
+            if gripper_pos[0] < 0.2:
+                print("Cabinet doors opened! Moving to cube grasping.")
+                # Now move to the cube for grasping
+                pick_command = {
+                    'primitive_name': 'pick',
+                    'waypoints': [base_pose[:2].tolist(), self.object_location[:2].tolist()]
+                }
+                
+                base_command = self.build_base_command(pick_command)
+                if base_command:
+                    self.base_waypoints = base_command['waypoints']
+                    self.target_ee_pos = base_command['target_ee_pos']
+                    self.current_waypoint_idx = 1
+                    self.lookahead_position = None
+                    self.state = 'moving'
+                    self.grasp_step = 0  # Reset grasp step for cube grasping
+                    print(f"Starting base movement to cube for grasping.")
+                else:
+                    print("Failed to build base command for cube grasping")
+                    self.state = 'grasping'  # Skip base movement and go directly to grasping
+            return action
+
+    def create_arm_action(self, base_pose, arm_target_pos, gripper_pos):
+        return {
+            'base_pose': base_pose.copy(),
+            'arm_pos': arm_target_pos,
+            'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]), # Pointing down
+            'gripper_pos': gripper_pos
+        }
+
+    def get_base_height(self):
+        # This should be fetched from the model, but hardcoded for now
+        return 0.48
+
+    # --- Reusing methods from MotionPlannerPolicy ---
+
+    def execute_base_movement(self, obs):
+        base_pose = obs['base_pose']
+        
+        if self.current_waypoint_idx >= len(self.base_waypoints):
+            return None
+        
+        while True:
+            if self.current_waypoint_idx >= len(self.base_waypoints):
+                self.lookahead_position = None
+                break
+            start = self.base_waypoints[self.current_waypoint_idx - 1]
+            end = self.base_waypoints[self.current_waypoint_idx]
+            d = (end[0] - start[0], end[1] - start[1])
+            f = (start[0] - base_pose[0], start[1] - base_pose[1])
+            t2 = self.intersect(d, f, self.LOOKAHEAD_DISTANCE)
+            if t2 is not None:
+                self.lookahead_position = [start[0] + t2 * d[0], start[1] + t2 * d[1]]
+                break
+            if self.current_waypoint_idx == len(self.base_waypoints) - 1:
+                self.lookahead_position = None
+                break
+            self.current_waypoint_idx += 1
+        
+        if self.lookahead_position is None:
+            target_position = self.base_waypoints[-1]
+            position_error = self.distance(base_pose[:2], target_position)
+            if position_error < self.position_tolerance:
+                return None
+        else:
+            target_position = self.lookahead_position
+        
+        target_heading = base_pose[2]
+        if self.target_ee_pos is not None:
+            dx = self.target_ee_pos[0] - base_pose[0]
+            dy = self.target_ee_pos[1] - base_pose[1]
+            desired_heading = math.atan2(dy, dx)
+            
+            frac = 1
+            if self.lookahead_position is not None:
+                remaining_path_length = self.LOOKAHEAD_DISTANCE
+                curr_waypoint = self.lookahead_position
+                for idx in range(self.current_waypoint_idx, len(self.base_waypoints)):
+                    next_waypoint = self.base_waypoints[idx]
+                    remaining_path_length += self.distance(curr_waypoint, next_waypoint)
+                    curr_waypoint = next_waypoint
+                frac = math.sqrt(self.LOOKAHEAD_DISTANCE / max(remaining_path_length, self.LOOKAHEAD_DISTANCE))
+            
+            heading_diff = self.restrict_heading_range(desired_heading - base_pose[2])
+            target_heading += frac * heading_diff
+        
+        return {
+            'base_pose': np.array([target_position[0], target_position[1], target_heading]),
+            'arm_pos': obs['arm_pos'].copy(),
+            'arm_quat': obs['arm_quat'].copy(),
+            'gripper_pos': obs['gripper_pos'].copy(),
+        }
+
+    def dot(self, a, b):
+        return a[0] * b[0] + a[1] * b[1]
+
+    def intersect(self, d, f, r, use_t1=False):
+        a = self.dot(d, d)
+        b = 2 * self.dot(f, d)
+        c = self.dot(f, f) - r * r
+        discriminant = (b * b) - (4 * a * c)
+        if discriminant >= 0:
+            if use_t1:
+                t1 = (-b - math.sqrt(discriminant)) / (2 * a + 1e-6)
+                if 0 <= t1 <= 1:
+                    return t1
+            else:
+                t2 = (-b + math.sqrt(discriminant)) / (2 * a + 1e-6)
+                if 0 <= t2 <= 1:
+                    return t2
+        return None
+
+    def search_for_objects(self, obs):
+        base_pose = obs['base_pose']
+        return {
+            'base_pose': np.array([base_pose[0], base_pose[1], base_pose[2] + 0.1]),
+            'arm_pos': np.array([0.45, 0.0, 0.25]),
+            'arm_quat': np.array([0.0, 0.707, 0.0, 0.707]),
+            'gripper_pos': obs['gripper_pos'].copy(),
+        }
+
+    def distance(self, pt1, pt2):
+        return math.sqrt((pt2[0] - pt1[0])**2 + (pt2[1] - pt1[1])**2)
+
+    def restrict_heading_range(self, h):
+        return (h + math.pi) % (2 * math.pi) - math.pi
+
+    def get_end_effector_offset(self, primitive_name):
+        return 0.55
+
+    def build_base_command(self, command):
+        target_ee_pos = command['waypoints'][-1]
+        end_effector_offset = self.get_end_effector_offset(command['primitive_name'])
+        new_waypoint = None
+        reversed_waypoints = command['waypoints'][::-1]
+        
+        for idx in range(1, len(reversed_waypoints)):
+            start = reversed_waypoints[idx - 1]
+            end = reversed_waypoints[idx]
+            d = (end[0] - start[0], end[1] - start[1])
+            f = (start[0] - target_ee_pos[0], start[1] - target_ee_pos[1])
+            t2 = self.intersect(d, f, end_effector_offset)
+            if t2 is not None:
+                new_waypoint = (start[0] + t2 * d[0], start[1] + t2 * d[1])
+                break
+                
+        if new_waypoint is not None:
+            waypoints = reversed_waypoints[idx:][::-1] + [new_waypoint]
+        else:
+            print('Warning: Base needs to deviate from commanded path to reach target position')
             curr_position = command['waypoints'][0]
             signed_dist = self.distance(curr_position, target_ee_pos) - end_effector_offset
             dx = target_ee_pos[0] - curr_position[0]
