@@ -257,10 +257,17 @@ class MujocoSim:
         # Reset simulation
         mujoco.mj_resetData(self.model, self.data)
 
-        # Reset cube (removed randomness)
-        # self.qpos_cube[:2] += np.random.uniform(-0.1, 0.1, 2)
-        # theta = np.random.uniform(-math.pi, math.pi)
-        # self.qpos_cube[3:7] = np.array([math.cos(theta / 2), 0, 0, math.sin(theta / 2)])
+        # Randomize cube position and orientation
+        # Randomize position within a reasonable range around the table
+        self.qpos_cube[:2] += np.random.uniform(-0.3, 0.3, 2)  # X and Y position
+        # Keep Z position at table height (don't randomize vertical position)
+        
+        # Randomize orientation around Z-axis (yaw)
+        theta = np.random.uniform(-math.pi, math.pi)
+        self.qpos_cube[3:7] = np.array([math.cos(theta / 2), 0, 0, math.sin(theta / 2)])
+        
+        print(f"Cube reset to position: [{self.qpos_cube[0]:.3f}, {self.qpos_cube[1]:.3f}, {self.qpos_cube[2]:.3f}], theta: {theta:.3f}")
+        
         mujoco.mj_forward(self.model, self.data)
 
         # Reset controllers

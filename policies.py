@@ -376,6 +376,12 @@ class MotionPlannerPolicy(Policy):
         self.episode_ended = False
         self.grasp_step = 0  # Reset grasping step
         
+        # Clean up any grasp tracking variables
+        if hasattr(self, 'grasp_start_time'):
+            delattr(self, 'grasp_start_time')
+        if hasattr(self, 'initial_gripper_pos'):
+            delattr(self, 'initial_gripper_pos')
+        
         # Enable policy execution immediately
         self.enabled = True
         
@@ -409,14 +415,21 @@ class MotionPlannerPolicy(Policy):
             if detected_objects:
                 # Create pick command
                 self.object_location = detected_objects[0]
-                self.target_location = np.array([0.5, -0.3, 0.02])  # Ground level target
+                # Set placement location relative to detected object (e.g., 50cm away)
+                self.target_location = np.array([
+                    self.object_location[0] + 0.5,  # 50cm in X direction
+                    self.object_location[1],        # Same Y as object
+                    self.object_location[2]         # Same Z as object (table height)
+                ])
                 
                 pick_command = {
                     'primitive_name': 'pick',
                     'waypoints': [base_pose[:2].tolist(), self.object_location[:2].tolist()],
+                    'object_3d_pos': self.object_location.copy()  # Store full 3D position
                 }
                 
                 print(f"Object detected at: {self.object_location}")
+                print(f"Target placement location: {self.target_location}")
                 print(f"Creating pick command with waypoints: {pick_command['waypoints']}")
                 
                 # Build base command and start moving
@@ -467,62 +480,138 @@ class MotionPlannerPolicy(Policy):
             # Execute arm manipulation
             if self.current_command['primitive_name'] == 'pick':
                 # Position arm above object and close gripper to grasp
-                # Calculate relative position of object from base
-                object_relative_pos = np.array([
-                    self.target_ee_pos[0] - base_pose[0],
-                    self.target_ee_pos[1] - base_pose[1], 
-                    -0.33  # Slightly higher position for better top grasp approach
-                ])
+                # Use actual detected object 3D position
+                if 'object_3d_pos' in self.current_command:
+                    object_3d_pos = self.current_command['object_3d_pos']
+                    # Calculate global position difference with better approach height
+                    global_diff = np.array([
+                        object_3d_pos[0] - base_pose[0],
+                        object_3d_pos[1] - base_pose[1], 
+                        object_3d_pos[2] + 0.25 - 0.48  # Object height + higher offset - base height (was 0.15, now 0.25)
+                    ])
+                    
+                    # Transform to base's local coordinate frame (account for base rotation)
+                    base_angle = base_pose[2]
+                    cos_angle = math.cos(-base_angle)  # Negative for inverse rotation
+                    sin_angle = math.sin(-base_angle)
+                    
+                    object_relative_pos = np.array([
+                        cos_angle * global_diff[0] - sin_angle * global_diff[1],
+                        sin_angle * global_diff[0] + cos_angle * global_diff[1],
+                        global_diff[2]  # Z component unchanged
+                    ])
+                    print(f"Primary path: global_diff = {global_diff}")
+                else:
+                    # Fallback to target_ee_pos if object_3d_pos not available
+                    global_diff = np.array([
+                        self.target_ee_pos[0] - base_pose[0],
+                        self.target_ee_pos[1] - base_pose[1], 
+                        -0.33  # Slightly higher position for better top grasp approach
+                    ])
+                    
+                    # Transform to base's local coordinate frame
+                    base_angle = base_pose[2]
+                    cos_angle = math.cos(-base_angle)
+                    sin_angle = math.sin(-base_angle)
+                    
+                    object_relative_pos = np.array([
+                        cos_angle * global_diff[0] - sin_angle * global_diff[1],
+                        sin_angle * global_diff[0] + cos_angle * global_diff[1],
+                        global_diff[2]
+                    ])
+                    print(f"Fallback path: global_diff = {global_diff}")
                 
-                print(f"Manipulating: object_relative_pos = {object_relative_pos}")
-                print(f"Target EE pos: {self.target_ee_pos}, Base pose: {base_pose}")
+                print(f"Base angle: {base_pose[2]:.3f} rad ({math.degrees(base_pose[2]):.1f} deg)")
+                print(f"Object global pos: {self.current_command.get('object_3d_pos', 'N/A')}")
+                print(f"Transformed object_relative_pos = {object_relative_pos}")
+                print(f"Current arm pos: {arm_pos}")
+                print(f"Position error: {np.linalg.norm(arm_pos - object_relative_pos):.4f}m")
                 print(f"Grasp step: {self.grasp_step}")
                 
                 if self.grasp_step == 0:
-                    # Step 1: Position arm with open gripper
+                    # Step 1: Position arm well above object with open gripper (safe approach)
                     action = {
                         'base_pose': base_pose.copy(),
                         'arm_pos': object_relative_pos,  # Position arm above object
                         'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
                         'gripper_pos': np.array([0.0])  # Keep gripper open while positioning
                     }
-                    print(f"Step 1: Positioning arm with open gripper")
+                    print(f"Step 1: Positioning arm above object with open gripper")
                     # Move to next step after arm is positioned
-                    if np.allclose(arm_pos, object_relative_pos, atol=0.05):  # 5cm tolerance
+                    if np.allclose(arm_pos, object_relative_pos, atol=0.03):  # Tighter tolerance: 3cm
                         self.grasp_step = 1
-                        print("Arm positioned, moving to grasping step")
+                        print("Arm positioned above object, moving to lower approach")
                 
                 elif self.grasp_step == 1:
-                    # Step 2: Close gripper to grasp
+                    # Step 2: Lower gripper closer to object for precise grasping
+                    lower_pos = object_relative_pos.copy()
+                    lower_pos[2] -= 0.08  # Lower by 8cm for closer approach (more conservative)
                     action = {
                         'base_pose': base_pose.copy(),
-                        'arm_pos': object_relative_pos,  # Maintain arm position
+                        'arm_pos': lower_pos,  # Lower the arm closer to object
+                        'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
+                        'gripper_pos': np.array([0.0])  # Keep gripper open while lowering
+                    }
+                    print(f"Step 2: Lowering gripper for precise approach... target: {lower_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
+                    if np.allclose(arm_pos, lower_pos, atol=0.02):  # Very tight tolerance: 2cm
+                        self.grasp_step = 2
+                        print("Gripper lowered to grasping position, closing gripper")
+                
+                elif self.grasp_step == 2:
+                    # Step 3: Close gripper to grasp
+                    lower_pos = object_relative_pos.copy()
+                    lower_pos[2] -= 0.08  # Maintain lowered position
+                    action = {
+                        'base_pose': base_pose.copy(),
+                        'arm_pos': lower_pos,  # Maintain lowered position
                         'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
                         'gripper_pos': np.array([1.0])  # Close gripper
                     }
-                    print(f"Step 2: Closing gripper... current position: {gripper_pos[0]:.3f}")
-                    if gripper_pos[0] > 0.8:  # Gripper closed successfully
-                        self.grasp_step = 2
-                        print("Grasped object successfully! Now lifting object by 20cm.")
+                    print(f"Step 3: Closing gripper... current position: {gripper_pos[0]:.3f}")
+                    
+                    # Initialize grasp attempt tracking
+                    if not hasattr(self, 'grasp_start_time'):
+                        self.grasp_start_time = time.time()
+                        self.initial_gripper_pos = gripper_pos[0]
+                        print(f"Started grasp attempt, initial gripper pos: {self.initial_gripper_pos:.3f}")
+                    
+                    # Check for successful grasp (multiple criteria)
+                    gripper_closed_enough = gripper_pos[0] > 0.55  # Lower threshold (was 0.8)
+                    gripper_progress = (gripper_pos[0] - self.initial_gripper_pos) > 0.3  # Made significant progress
+                    grasp_timeout = (time.time() - self.grasp_start_time) > 3.0  # 3 second timeout
+                    
+                    if gripper_closed_enough or gripper_progress or grasp_timeout:
+                        if gripper_closed_enough or gripper_progress:
+                            print(f"Grasp successful! Gripper pos: {gripper_pos[0]:.3f}, progress: {gripper_pos[0] - self.initial_gripper_pos:.3f}")
+                        else:
+                            print(f"Grasp timeout reached, proceeding with current grip: {gripper_pos[0]:.3f}")
+                        
+                        self.grasp_step = 3
+                        # Clean up tracking variables
+                        delattr(self, 'grasp_start_time')
+                        delattr(self, 'initial_gripper_pos')
+                        print("Moving to lift phase!")
                 
-                elif self.grasp_step == 2:
-                    # Step 3: Lift object by 20cm
-                    lifted_pos = object_relative_pos.copy()
-                    lifted_pos[2] += 0.20  # Lift by 20cm
+                elif self.grasp_step == 3:
+                    # Step 4: Lift object by 20cm from the grasping position
+                    lower_pos = object_relative_pos.copy()
+                    lower_pos[2] -= 0.08  # Start from lowered grasping position
+                    lifted_pos = lower_pos.copy()
+                    lifted_pos[2] += 0.28  # Lift by 28cm from grasping position (net +20cm from original)
                     action = {
                         'base_pose': base_pose.copy(),
                         'arm_pos': lifted_pos,  # Lift the object
                         'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
                         'gripper_pos': np.array([1.0])  # Keep gripper closed
                     }
-                    print(f"Step 3: Lifting object... target height: {lifted_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
+                    print(f"Step 4: Lifting object... target height: {lifted_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
                     if np.allclose(arm_pos, lifted_pos, atol=0.05):  # 5cm tolerance
                         print("Object lifted successfully! Now moving to placement location.")
-                        # Create place command to move to placement location
-                        self.target_location = np.array([1.0, 0.1, 0.02])  # Specified placement location
+                        # Create place command to move to placement location (already set dynamically)
                         place_command = {
                             'primitive_name': 'place',
                             'waypoints': [base_pose[:2].tolist(), self.target_location[:2].tolist()],
+                            'target_3d_pos': self.target_location.copy()  # Store full 3D target position
                         }
                         
                         # Build base command for placement
@@ -544,12 +633,44 @@ class MotionPlannerPolicy(Policy):
                 return action
             elif self.current_command['primitive_name'] == 'place':
                 # Position arm above placement location and open gripper
-                # Calculate relative position of placement target from base
-                target_relative_pos = np.array([
-                    self.target_ee_pos[0] - base_pose[0],
-                    self.target_ee_pos[1] - base_pose[1], 
-                    -0.30  # Position slightly above target for placement
-                ])
+                # Use actual target 3D position
+                if 'target_3d_pos' in self.current_command:
+                    target_3d_pos = self.current_command['target_3d_pos']
+                    # Calculate global position difference
+                    global_diff = np.array([
+                        target_3d_pos[0] - base_pose[0],
+                        target_3d_pos[1] - base_pose[1], 
+                        target_3d_pos[2] + 0.10 - 0.48  # Target height + offset - base height
+                    ])
+                    
+                    # Transform to base's local coordinate frame (account for base rotation)
+                    base_angle = base_pose[2]
+                    cos_angle = math.cos(-base_angle)  # Negative for inverse rotation
+                    sin_angle = math.sin(-base_angle)
+                    
+                    target_relative_pos = np.array([
+                        cos_angle * global_diff[0] - sin_angle * global_diff[1],
+                        sin_angle * global_diff[0] + cos_angle * global_diff[1],
+                        global_diff[2]  # Z component unchanged
+                    ])
+                else:
+                    # Fallback to target_ee_pos if target_3d_pos not available
+                    global_diff = np.array([
+                        self.target_ee_pos[0] - base_pose[0],
+                        self.target_ee_pos[1] - base_pose[1], 
+                        -0.30  # Position slightly above target for placement
+                    ])
+                    
+                    # Transform to base's local coordinate frame
+                    base_angle = base_pose[2]
+                    cos_angle = math.cos(-base_angle)
+                    sin_angle = math.sin(-base_angle)
+                    
+                    target_relative_pos = np.array([
+                        cos_angle * global_diff[0] - sin_angle * global_diff[1],
+                        sin_angle * global_diff[0] + cos_angle * global_diff[1],
+                        global_diff[2]
+                    ])
                 
                 print(f"Placing: target_relative_pos = {target_relative_pos}")
                 print(f"Target EE pos: {self.target_ee_pos}, Base pose: {base_pose}")
@@ -706,32 +827,20 @@ class MotionPlannerPolicy(Policy):
         return None
 
     def detect_objects_from_ground_truth(self, obs):
-        """Detect objects using fixed position for cube"""
+        """Detect objects using ground truth from MuJoCo simulation"""
         detected_objects = []
         
-        # Always return fixed cube position as requested
-        fixed_cube_pos = np.array([0.6, 0.0, 0.0199])
-        detected_objects.append(fixed_cube_pos)
+        # Get actual cube position from MuJoCo environment
+        if 'cube_pos' in obs:
+            cube_pos = obs['cube_pos'].copy()
+            detected_objects.append(cube_pos)
+            print(f"Detected cube at position: {cube_pos}")
+        else:
+            print("Warning: cube_pos not found in observation")
         
         return detected_objects
 
-    def get_cube_position_from_simulation(self, obs):
-        """Extract cube position from MuJoCo simulation ground truth"""
-        # Check if observation contains cube position (this would be available in real MuJoCo)
-        if hasattr(obs, 'cube_pos'):
-            return obs['cube_pos'][:3]
-        
-        # For demonstration, simulate accessing cube position with some variability
-        if hasattr(self, '_simulated_cube_pos'):
-            # Add some small random variation to simulate real object detection
-            noise = np.random.normal(0, 0.01, 3)  # 1cm standard deviation noise
-            return self._simulated_cube_pos + noise
-        else:
-            # Initialize simulated cube position at ground level
-            self._simulated_cube_pos = np.array([0.6, 0.15, 0.02])  # Ground level object
-            return self._simulated_cube_pos
-        
-        return None
+
 
     def search_for_objects(self, obs):
         """Search behavior when no objects are detected"""
