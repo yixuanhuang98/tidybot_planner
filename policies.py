@@ -827,16 +827,26 @@ class MotionPlannerPolicy(Policy):
         return None
 
     def detect_objects_from_ground_truth(self, obs):
-        """Detect objects using ground truth from MuJoCo simulation"""
+        """Detect objects using ground truth from MuJoCo simulation and find the one with smallest x value"""
         detected_objects = []
         
-        # Get actual cube position from MuJoCo environment
-        if 'cube_pos' in obs:
-            cube_pos = obs['cube_pos'].copy()
-            detected_objects.append(cube_pos)
-            print(f"Detected cube at position: {cube_pos}")
-        else:
-            print("Warning: cube_pos not found in observation")
+        # Get all three cube positions from MuJoCo environment
+        cubes = []
+        for i in range(1, 4):
+            cube_key = f'cube{i}_pos'
+            if cube_key in obs:
+                cube_pos = obs[cube_key].copy()
+                cubes.append((cube_pos, i))
+                print(f"Detected cube {i} at position: {cube_pos}")
+            else:
+                print(f"Warning: {cube_key} not found in observation")
+        
+        if cubes:
+            # Sort cubes by x position and select the one with smallest x value
+            cubes.sort(key=lambda x: x[0][0])  # Sort by x coordinate (first element of position)
+            target_cube_pos, target_cube_id = cubes[0]
+            detected_objects.append(target_cube_pos)
+            print(f"Selected cube {target_cube_id} with smallest x value: {target_cube_pos[0]:.3f}")
         
         return detected_objects
 

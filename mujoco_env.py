@@ -20,7 +20,7 @@ from ik_solver import IKSolver
 
 class ShmState:
     def __init__(self, existing_instance=None):
-        arr = np.empty(3 + 3 + 4 + 1 + 1 + 3 + 4)  # Added 3 for cube pos and 4 for cube quat
+        arr = np.empty(3 + 3 + 4 + 1 + 1 + 9 + 12)  # Added 9 for 3 cube positions and 12 for 3 cube quaternions (3*3 + 3*4)
         if existing_instance is None:
             self.shm = shared_memory.SharedMemory(create=True, size=arr.nbytes)
         else:
@@ -31,8 +31,12 @@ class ShmState:
         self.arm_quat = self.data[6:10]
         self.gripper_pos = self.data[10:11]
         self.initialized = self.data[11:12]
-        self.cube_pos = self.data[12:15]
-        self.cube_quat = self.data[15:19]
+        self.cube1_pos = self.data[12:15]
+        self.cube2_pos = self.data[15:18]
+        self.cube3_pos = self.data[18:21]
+        self.cube1_quat = self.data[21:25]
+        self.cube2_quat = self.data[25:29]
+        self.cube3_quat = self.data[29:33]
         self.initialized[:] = 0.0
 
     def close(self):
@@ -214,7 +218,7 @@ class MujocoSim:
         # Enable gravity compensation for everything except objects
         self.model.body_gravcomp[:] = 1.0
         body_names = {self.model.body(i).name for i in range(self.model.nbody)}
-        for object_name in ['cube']:
+        for object_name in ['cube1', 'cube2', 'cube3']:
             if object_name in body_names:
                 self.model.body_gravcomp[self.model.body(object_name).id] = 0.0
 
@@ -229,7 +233,10 @@ class MujocoSim:
         ctrl_arm = self.data.ctrl[base_dofs:(base_dofs + arm_dofs)]
         self.qpos_gripper = self.data.qpos[(base_dofs + arm_dofs):(base_dofs + arm_dofs + 1)]
         ctrl_gripper = self.data.ctrl[(base_dofs + arm_dofs):(base_dofs + arm_dofs + 1)]
-        self.qpos_cube = self.data.qpos[(base_dofs + arm_dofs + 8):(base_dofs + arm_dofs + 8 + 7)]  # 8 for gripper qpos, 7 for cube qpos
+        # Track all three cubes (8 for gripper qpos, 7 for each cube qpos)
+        self.qpos_cube1 = self.data.qpos[(base_dofs + arm_dofs + 8):(base_dofs + arm_dofs + 8 + 7)]
+        self.qpos_cube2 = self.data.qpos[(base_dofs + arm_dofs + 8 + 7):(base_dofs + arm_dofs + 8 + 14)]
+        self.qpos_cube3 = self.data.qpos[(base_dofs + arm_dofs + 8 + 14):(base_dofs + arm_dofs + 8 + 21)]
 
         # Controllers
         self.base_controller = BaseController(self.qpos_base, qvel_base, ctrl_base, self.model.opt.timestep)
@@ -257,16 +264,18 @@ class MujocoSim:
         # Reset simulation
         mujoco.mj_resetData(self.model, self.data)
 
-        # Randomize cube position and orientation
-        # Randomize position within a reasonable range around the table
-        self.qpos_cube[:2] += np.random.uniform(-0.3, 0.3, 2)  # X and Y position
-        # Keep Z position at table height (don't randomize vertical position)
-        
-        # Randomize orientation around Z-axis (yaw)
-        theta = np.random.uniform(-math.pi, math.pi)
-        self.qpos_cube[3:7] = np.array([math.cos(theta / 2), 0, 0, math.sin(theta / 2)])
-        
-        print(f"Cube reset to position: [{self.qpos_cube[0]:.3f}, {self.qpos_cube[1]:.3f}, {self.qpos_cube[2]:.3f}], theta: {theta:.3f}")
+        # Randomize positions and orientations for all three cubes
+        cubes = [self.qpos_cube1, self.qpos_cube2, self.qpos_cube3]
+        for i, cube_qpos in enumerate(cubes):
+            # Randomize position within a reasonable range around the table
+            cube_qpos[:2] += np.random.uniform(-0.3, 0.3, 2)  # X and Y position
+            # Keep Z position at table height (don't randomize vertical position)
+            
+            # Randomize orientation around Z-axis (yaw)
+            theta = np.random.uniform(-math.pi, math.pi)
+            cube_qpos[3:7] = np.array([math.cos(theta / 2), 0, 0, math.sin(theta / 2)])
+            
+            print(f"Cube {i+1} reset to position: [{cube_qpos[0]:.3f}, {cube_qpos[1]:.3f}, {cube_qpos[2]:.3f}], theta: {theta:.3f}")
         
         mujoco.mj_forward(self.model, self.data)
 
@@ -303,9 +312,13 @@ class MujocoSim:
         # Update gripper pos
         self.shm_state.gripper_pos[:] = self.qpos_gripper / 0.8  # right_driver_joint, joint range [0, 0.8]
 
-        # Update cube pos and quat
-        self.shm_state.cube_pos[:] = self.qpos_cube[:3]  # First 3 elements are position
-        self.shm_state.cube_quat[:] = self.qpos_cube[3:7]  # Next 4 elements are quaternion
+        # Update all three cube positions and quaternions
+        self.shm_state.cube1_pos[:] = self.qpos_cube1[:3]  # First 3 elements are position
+        self.shm_state.cube1_quat[:] = self.qpos_cube1[3:7]  # Next 4 elements are quaternion
+        self.shm_state.cube2_pos[:] = self.qpos_cube2[:3]
+        self.shm_state.cube2_quat[:] = self.qpos_cube2[3:7]
+        self.shm_state.cube3_pos[:] = self.qpos_cube3[:3]
+        self.shm_state.cube3_quat[:] = self.qpos_cube3[3:7]
 
         # Notify reset() function that state has been initialized
         self.shm_state.initialized[:] = 1.0
@@ -404,17 +417,30 @@ class MujocoEnv:
         if arm_quat[3] < 0.0:  # Enforce quaternion uniqueness
             np.negative(arm_quat, out=arm_quat)
         
-        cube_quat = self.shm_state.cube_quat[[1, 2, 3, 0]]  # (w, x, y, z) -> (x, y, z, w)
-        if cube_quat[3] < 0.0:  # Enforce quaternion uniqueness
-            np.negative(cube_quat, out=cube_quat)
+        # Process all three cube quaternions
+        cube1_quat = self.shm_state.cube1_quat[[1, 2, 3, 0]]  # (w, x, y, z) -> (x, y, z, w)
+        if cube1_quat[3] < 0.0:  # Enforce quaternion uniqueness
+            np.negative(cube1_quat, out=cube1_quat)
+            
+        cube2_quat = self.shm_state.cube2_quat[[1, 2, 3, 0]]  # (w, x, y, z) -> (x, y, z, w)
+        if cube2_quat[3] < 0.0:  # Enforce quaternion uniqueness
+            np.negative(cube2_quat, out=cube2_quat)
+            
+        cube3_quat = self.shm_state.cube3_quat[[1, 2, 3, 0]]  # (w, x, y, z) -> (x, y, z, w)
+        if cube3_quat[3] < 0.0:  # Enforce quaternion uniqueness
+            np.negative(cube3_quat, out=cube3_quat)
             
         obs = {
             'base_pose': self.shm_state.base_pose.copy(),
             'arm_pos': self.shm_state.arm_pos.copy(),
             'arm_quat': arm_quat,
             'gripper_pos': self.shm_state.gripper_pos.copy(),
-            'cube_pos': self.shm_state.cube_pos.copy(),
-            'cube_quat': cube_quat,
+            'cube1_pos': self.shm_state.cube1_pos.copy(),
+            'cube1_quat': cube1_quat,
+            'cube2_pos': self.shm_state.cube2_pos.copy(),
+            'cube2_quat': cube2_quat,
+            'cube3_pos': self.shm_state.cube3_pos.copy(),
+            'cube3_quat': cube3_quat,
         }
         if self.render_images:
             for shm_image in self.shm_images:
@@ -449,7 +475,7 @@ if __name__ == '__main__':
                 }
                 env.step(action)
                 obs = env.get_obs()
-                print(f"Cube pos: {obs['cube_pos']}, Cube quat: {obs['cube_quat']}")
+                print(f"Cube1 pos: {obs['cube1_pos']}, Cube2 pos: {obs['cube2_pos']}, Cube3 pos: {obs['cube3_pos']}")
                 print([(k, v.shape) if v.ndim == 3 else (k, v) for (k, v) in obs.items()])
                 time.sleep(POLICY_CONTROL_PERIOD)  # Note: Not precise
     finally:
