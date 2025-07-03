@@ -1,7 +1,6 @@
 <mujoco model="tidybot scene">
   <include file="tidybot_open.xml"/>
   <include file="hingecabinet_asset.xml"/>
-  <include file="cube.xml"/>
 
   <statistic center="0.25 0 0.6" extent="1.0" meansize="0.05"/>
 
@@ -30,10 +29,6 @@
     <body name="interactive_obj" pos="1.0 0 .25" quat="-0.707 0 0 0.707">
        <include file="hingecabinet_body.xml"/>
        <joint name="interactive_obj_freejoint" type="free"/>
-    </body>
-    <body name="cube" pos="1.0 0 0.47">
-        <joint type="free"/>
-        <geom class="cube"/>
     </body>
     <camera name="viewer" pos="0.8 -2.0 1.7" euler="1.0 0.0 0" fovy="42" resolution="640 480"/>
   </worldbody>

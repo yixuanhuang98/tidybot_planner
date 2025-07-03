@@ -20,7 +20,7 @@ from ik_solver import IKSolver
 
 class ShmState:
     def __init__(self, existing_instance=None):
-        arr = np.empty(3 + 3 + 4 + 1 + 1 + 3 + 4)  # Only cube1: 3 for position and 4 for quaternion
+        arr = np.empty(3 + 3 + 4 + 1 + 1 + 9 + 12)  # Added 9 for 3 cube positions and 12 for 3 cube quaternions (3*3 + 3*4)
         if existing_instance is None:
             self.shm = shared_memory.SharedMemory(create=True, size=arr.nbytes)
         else:
@@ -32,7 +32,11 @@ class ShmState:
         self.gripper_pos = self.data[10:11]
         self.initialized = self.data[11:12]
         self.cube1_pos = self.data[12:15]
-        self.cube1_quat = self.data[15:19]
+        self.cube2_pos = self.data[15:18]
+        self.cube3_pos = self.data[18:21]
+        self.cube1_quat = self.data[21:25]
+        self.cube2_quat = self.data[25:29]
+        self.cube3_quat = self.data[29:33]
         self.initialized[:] = 0.0
 
     def close(self):
@@ -229,8 +233,10 @@ class MujocoSim:
         ctrl_arm = self.data.ctrl[base_dofs:(base_dofs + arm_dofs)]
         self.qpos_gripper = self.data.qpos[(base_dofs + arm_dofs):(base_dofs + arm_dofs + 1)]
         ctrl_gripper = self.data.ctrl[(base_dofs + arm_dofs):(base_dofs + arm_dofs + 1)]
-        # Track only cube1 (8 for gripper qpos, 7 for cube1 qpos)
+        # Track all three cubes (8 for gripper qpos, 7 for each cube qpos)
         self.qpos_cube1 = self.data.qpos[(base_dofs + arm_dofs + 8):(base_dofs + arm_dofs + 8 + 7)]
+        self.qpos_cube2 = self.data.qpos[(base_dofs + arm_dofs + 8 + 7):(base_dofs + arm_dofs + 8 + 14)]
+        self.qpos_cube3 = self.data.qpos[(base_dofs + arm_dofs + 8 + 14):(base_dofs + arm_dofs + 8 + 21)]
 
         # Controllers
         self.base_controller = BaseController(self.qpos_base, qvel_base, ctrl_base, self.model.opt.timestep)
@@ -248,6 +254,16 @@ class MujocoSim:
         self.base_rot_axis = np.array([0.0, 0.0, 1.0])
         self.base_quat_inv = np.empty(4)
 
+        # Find leftdoor_site and rightdoor_site IDs if they exist
+        self.leftdoor_site_id = None
+        self.rightdoor_site_id = None
+        for i in range(self.model.nsite):
+            name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_SITE, i)
+            if name == 'leftdoor_site':
+                self.leftdoor_site_id = i
+            elif name == 'rightdoor_site':
+                self.rightdoor_site_id = i
+
         # Reset the environment
         self.reset()
 
@@ -259,7 +275,7 @@ class MujocoSim:
         mujoco.mj_resetData(self.model, self.data)
 
         # Randomize positions and orientations for all three cubes
-        cubes = [self.qpos_cube1]
+        cubes = [self.qpos_cube1, self.qpos_cube2, self.qpos_cube3]
         for i, cube_qpos in enumerate(cubes):
             # Randomize position within a reasonable range around the table
             cube_qpos[:2] += np.random.uniform(-0.3, 0.3, 2)  # X and Y position
@@ -306,9 +322,13 @@ class MujocoSim:
         # Update gripper pos
         self.shm_state.gripper_pos[:] = self.qpos_gripper / 0.8  # right_driver_joint, joint range [0, 0.8]
 
-        # Update cube1 position and quaternion only
+        # Update all three cube positions and quaternions
         self.shm_state.cube1_pos[:] = self.qpos_cube1[:3]  # First 3 elements are position
         self.shm_state.cube1_quat[:] = self.qpos_cube1[3:7]  # Next 4 elements are quaternion
+        self.shm_state.cube2_pos[:] = self.qpos_cube2[:3]
+        self.shm_state.cube2_quat[:] = self.qpos_cube2[3:7]
+        self.shm_state.cube3_pos[:] = self.qpos_cube3[:3]
+        self.shm_state.cube3_quat[:] = self.qpos_cube3[3:7]
 
         # Notify reset() function that state has been initialized
         self.shm_state.initialized[:] = 1.0
@@ -407,10 +427,18 @@ class MujocoEnv:
         if arm_quat[3] < 0.0:  # Enforce quaternion uniqueness
             np.negative(arm_quat, out=arm_quat)
         
-        # Process cube1 quaternion only
+        # Process all three cube quaternions
         cube1_quat = self.shm_state.cube1_quat[[1, 2, 3, 0]]  # (w, x, y, z) -> (x, y, z, w)
         if cube1_quat[3] < 0.0:  # Enforce quaternion uniqueness
             np.negative(cube1_quat, out=cube1_quat)
+            
+        cube2_quat = self.shm_state.cube2_quat[[1, 2, 3, 0]]  # (w, x, y, z) -> (x, y, z, w)
+        if cube2_quat[3] < 0.0:  # Enforce quaternion uniqueness
+            np.negative(cube2_quat, out=cube2_quat)
+            
+        cube3_quat = self.shm_state.cube3_quat[[1, 2, 3, 0]]  # (w, x, y, z) -> (x, y, z, w)
+        if cube3_quat[3] < 0.0:  # Enforce quaternion uniqueness
+            np.negative(cube3_quat, out=cube3_quat)
             
         obs = {
             'base_pose': self.shm_state.base_pose.copy(),
@@ -419,7 +447,17 @@ class MujocoEnv:
             'gripper_pos': self.shm_state.gripper_pos.copy(),
             'cube1_pos': self.shm_state.cube1_pos.copy(),
             'cube1_quat': cube1_quat,
+            'cube2_pos': self.shm_state.cube2_pos.copy(),
+            'cube2_quat': cube2_quat,
+            'cube3_pos': self.shm_state.cube3_pos.copy(),
+            'cube3_quat': cube3_quat,
         }
+        # Add leftdoor_pos if available
+        if hasattr(self, 'sim') and hasattr(self.sim, 'leftdoor_site_id') and self.sim.leftdoor_site_id is not None:
+            obs['leftdoor_pos'] = self.sim.data.site_xpos[self.sim.leftdoor_site_id].copy()
+        # Add rightdoor_pos if available
+        if hasattr(self, 'sim') and hasattr(self.sim, 'rightdoor_site_id') and self.sim.rightdoor_site_id is not None:
+            obs['rightdoor_pos'] = self.sim.data.site_xpos[self.sim.rightdoor_site_id].copy()
         if self.render_images:
             for shm_image in self.shm_images:
                 obs[f'{shm_image.camera_name}_image'] = shm_image.data.copy()
