@@ -254,16 +254,6 @@ class MujocoSim:
         self.base_rot_axis = np.array([0.0, 0.0, 1.0])
         self.base_quat_inv = np.empty(4)
 
-        # Find leftdoor_site and rightdoor_site IDs if they exist
-        self.leftdoor_site_id = None
-        self.rightdoor_site_id = None
-        for i in range(self.model.nsite):
-            name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_SITE, i)
-            if name == 'leftdoor_site':
-                self.leftdoor_site_id = i
-            elif name == 'rightdoor_site':
-                self.rightdoor_site_id = i
-
         # Reset the environment
         self.reset()
 
@@ -348,7 +338,7 @@ class MujocoSim:
 
 class MujocoEnv:
     def __init__(self, render_images=True, show_viewer=True, show_images=False):
-        self.mjcf_path = 'models/stanford_tidybot/scene_cubes_only.xml'
+        self.mjcf_path = 'models/stanford_tidybot/scene.xml'
         self.render_images = render_images
         self.show_viewer = show_viewer
         self.show_images = show_images
@@ -452,12 +442,6 @@ class MujocoEnv:
             'cube3_pos': self.shm_state.cube3_pos.copy(),
             'cube3_quat': cube3_quat,
         }
-        # Add leftdoor_pos if available
-        if hasattr(self, 'sim') and hasattr(self.sim, 'leftdoor_site_id') and self.sim.leftdoor_site_id is not None:
-            obs['leftdoor_pos'] = self.sim.data.site_xpos[self.sim.leftdoor_site_id].copy()
-        # Add rightdoor_pos if available
-        if hasattr(self, 'sim') and hasattr(self.sim, 'rightdoor_site_id') and self.sim.rightdoor_site_id is not None:
-            obs['rightdoor_pos'] = self.sim.data.site_xpos[self.sim.rightdoor_site_id].copy()
         if self.render_images:
             for shm_image in self.shm_images:
                 obs[f'{shm_image.camera_name}_image'] = shm_image.data.copy()
