@@ -154,7 +154,7 @@ class MujocoHandler:
         # State
         self.current_state = EnvironmentState.create_empty()
         self.current_action = Action()
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         
         # Simulation references
         self.qpos_base = None
@@ -290,13 +290,14 @@ class MujocoHandler:
     def _control_callback(self, *_):
         """Control callback called by MuJoCo"""
         # Update controllers
-        self.base_controller.update(self.current_action.base_pose)
-        self.arm_controller.update(self.current_action.arm_pos, 
-                                 self.current_action.arm_quat, 
-                                 self.current_action.gripper_pos)
-        
-        # Update state
-        self._update_state()
+        with self.lock:
+            self.base_controller.update(self.current_action.base_pose)
+            self.arm_controller.update(self.current_action.arm_pos, 
+                                    self.current_action.arm_quat, 
+                                    self.current_action.gripper_pos)
+            
+            # Update state
+            self._update_state()
 
     def _update_state(self):
         """Update current state from simulation"""
