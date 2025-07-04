@@ -355,6 +355,8 @@ class MotionPlannerPolicy(Policy):
     LOOKAHEAD_DISTANCE = 0.3  # 30 cm
     POSITION_TOLERANCE = 0.005  # 0.5 cm (reduced from 1.5 cm)
     HEADING_TOLERANCE = math.radians(2.1)  # 2.1 degrees
+    GRASP_BASE_TOLERANCE = 0.002  # 0.2 cm for grasp
+    PLACE_BASE_TOLERANCE = 0.02   # 1.0 cm for placement (example, adjust as needed)
 
     # Object and target locations
     PLACEMENT_X_OFFSET = 0.5  # 50cm in X direction
@@ -367,7 +369,7 @@ class MotionPlannerPolicy(Policy):
     PLACE_APPROACH_HEIGHT_OFFSET = 0.10
 
     # Grasping parameters
-    GRASP_SUCCESS_THRESHOLD = 0.55
+    GRASP_SUCCESS_THRESHOLD = 0.6
     GRASP_PROGRESS_THRESHOLD = 0.3
     GRASP_TIMEOUT_S = 3.0
     PLACE_SUCCESS_THRESHOLD = 0.2
@@ -490,11 +492,16 @@ class MotionPlannerPolicy(Policy):
                     end_effector_offset = self.get_end_effector_offset(self.current_command['primitive_name'])
                     diff = abs(end_effector_offset - distance_to_target)
                     print(f"Distance to target EE: {distance_to_target:.3f}, EE offset: {end_effector_offset:.3f}, diff: {diff:.3f}")
-                    if diff < 0.002:  # 0.2 cm tolerance (reduced from 10 cm)
+                    # Set tolerance based on current command type
+                    if self.current_command['primitive_name'] == 'pick':
+                        base_tolerance = self.GRASP_BASE_TOLERANCE
+                    else:
+                        base_tolerance = self.PLACE_BASE_TOLERANCE
+                    if diff < base_tolerance:
                         self.state = 'manipulating'
                         print("Base reached target, starting arm manipulation")
                     else:
-                        print(f'Too far from target end effector position ({(100 * diff):.1f} cm)')
+                        print(f'Too far from target end effector position ({{(100 * diff):.1f}} cm)')
                         self.state = 'idle'
                 else:
                     self.state = 'idle'
