@@ -10,7 +10,7 @@ from agent.remote_policy import RemotePolicy
 from agent.motion_planner_policy import MotionPlannerPolicy
 from agent.go_to_cabinet_handle_policy import GoToCabinetHandlePolicy
 from agent.go_to_cabinet_handle_policy_right import GoToCabinetHandlePolicyRight
-from agent.motion_planner_policy_stack import MotionPlannerPolicyStack
+# from agent.motion_planner_policy_stack import MotionPlannerPolicyStack
 
 def run_episode(env, policy):
     # Reset the env
@@ -39,6 +39,9 @@ def run_episode(env, policy):
         if action is None:
             continue
 
+        if episode_ended:
+            break
+        
         # Execute valid action on robot
         if isinstance(action, dict):
             # Convert dict action to numpy array for the new environment API
@@ -69,7 +72,7 @@ def main(args):
         from env.mujoco.mujoco_env import BlocksEnv, CabinetEnv, DrawerEnv
         # Use headless mode but enable rendering if saving images
         render_images = args.save_images
-        env = BlocksEnv(render_images=render_images, show_viewer=False, max_episode_steps=10000, render_every_n_frames=100)
+        env = BlocksEnv(render_images=render_images, show_viewer=False, max_episode_steps=100000, render_every_n_frames=100)
         if args.save_images:
             print("Simulation will run in headless mode with image saving enabled")
     else:
