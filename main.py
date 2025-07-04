@@ -36,11 +36,11 @@ def run_episode(env, policy):
         # print('action', action)
 
         # No action: either teleop disabled or policy has indicated it is finished
-        if action is None:
-            # If the policy exposes an 'episode_ended' flag, respect it
-            if getattr(policy, 'episode_ended', False):
-                print('Policy reported episode ended')
-                break
+        # if action is None:
+        #     # If the policy exposes an 'episode_ended' flag, respect it
+        #     if getattr(policy, 'episode_ended', False):
+        #         print('Policy reported episode ended')
+        #         break
             # Otherwise just wait for next cycle (e.g., teleop not enabled)
             # break
 
@@ -55,8 +55,8 @@ def run_episode(env, policy):
                 env.render()
 
             # Check if episode should end
-            if terminated or truncated or success:
-            # if truncated or success:
+            # if terminated or truncated or success:
+            if truncated or success:
                 print(f'Episode ended - Success: {success}, Terminated: {terminated}, Truncated: {truncated}')
                 break
 
