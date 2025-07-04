@@ -184,8 +184,8 @@ class AbstractMujocoEnv(BaseEnv, ABC):
     def get_termination(self, states: Dict[str, Any]) -> bool:
         """Check if episode should terminate"""
         # Base termination conditions
-        if self._get_base_termination(states):
-            return True
+        # if self._get_base_termination(states):
+        #     return True
         
         # Scene-specific termination
         return self._get_scene_specific_termination(states)
@@ -285,39 +285,18 @@ class BlocksEnv(AbstractMujocoEnv):
         return observation
 
     def _get_scene_specific_reward(self, states: Dict[str, Any]) -> float:
-        """Calculate reward for block manipulation"""
+        """Reward for keeping arm in reasonable workspace (no stacking logic)"""
         reward = 0.0
-        
-        # Reward for keeping arm in reasonable workspace
         arm_pos = states['arm_pos']
         workspace_center = np.array([0.55, 0.0, 0.4])
         arm_distance = np.linalg.norm(arm_pos - workspace_center)
         if arm_distance < 0.5:
             reward += 0.1
-        
-        # Reward for cube stacking (example task)
-        cube1_pos = states.get('cube1_pos', np.zeros(3))
-        cube2_pos = states.get('cube2_pos', np.zeros(3))
-        cube3_pos = states.get('cube3_pos', np.zeros(3))
-        
-        # Reward for vertical stacking
-        if abs(cube1_pos[0] - cube2_pos[0]) < 0.05 and abs(cube1_pos[1] - cube2_pos[1]) < 0.05:
-            height_diff = abs(cube2_pos[2] - cube1_pos[2])
-            if 0.05 < height_diff < 0.15:  # Proper stacking height
-                reward += 1.0
-        
         return reward
 
     def _get_scene_specific_success(self, states: Dict[str, Any]) -> bool:
-        """Check if blocks are successfully stacked"""
-        cube1_pos = states.get('cube1_pos', np.zeros(3))
-        cube2_pos = states.get('cube2_pos', np.zeros(3))
-        
-        # Success if cubes are stacked
-        horizontal_distance = np.linalg.norm(cube1_pos[:2] - cube2_pos[:2])
-        height_diff = abs(cube2_pos[2] - cube1_pos[2])
-        
-        return horizontal_distance < 0.05 and 0.05 < height_diff < 0.15
+        """No explicit success condition (policy handles episode end)"""
+        return False
 
     def _get_scene_specific_termination(self, states: Dict[str, Any]) -> bool:
         """Check if blocks have fallen off table"""
