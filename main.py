@@ -10,7 +10,7 @@ from agent.remote_policy import RemotePolicy
 from agent.motion_planner_policy import MotionPlannerPolicy
 from agent.go_to_cabinet_handle_policy import GoToCabinetHandlePolicy
 from agent.go_to_cabinet_handle_policy_right import GoToCabinetHandlePolicyRight
-from agent.motion_planner_policy_stack import MotionPlannerPolicyStack
+# from agent.motion_planner_policy_stack import MotionPlannerPolicyStack
 
 def run_episode(env, policy):
     # Reset the env
@@ -35,8 +35,13 @@ def run_episode(env, policy):
         action = policy.step(obs)
         # print('action', action)
 
-        # No action if teleop not enabled
+        # No action: either teleop disabled or policy has indicated it is finished
         if action is None:
+            # If the policy exposes an 'episode_ended' flag, respect it
+            if getattr(policy, 'episode_ended', False):
+                print('Policy reported episode ended')
+                break
+            # Otherwise just wait for next cycle (e.g., teleop not enabled)
             continue
 
         # Execute valid action on robot
@@ -50,14 +55,15 @@ def run_episode(env, policy):
                 env.render()
 
             # Check if episode should end
-            if terminated or truncated or success:
-                episode_ended = True
+            # if terminated or truncated or success:
+            if truncated or success:
                 print(f'Episode ended - Success: {success}, Terminated: {terminated}, Truncated: {truncated}')
+                break
 
         # Episode ended
-        elif not episode_ended and action == 'end_episode':
-            episode_ended = True
+        elif action == 'end_episode':
             print('Episode ended')
+            break
 
         # Ready for env reset
         elif action == 'reset_env':
@@ -69,7 +75,7 @@ def main(args):
         from env.mujoco.mujoco_env import BlocksEnv, CabinetEnv, DrawerEnv
         # Use headless mode but enable rendering if saving images
         render_images = args.save_images
-        env = BlocksEnv(render_images=render_images, show_viewer=False, max_episode_steps=10000, render_every_n_frames=100)
+        env = BlocksEnv(render_images=render_images, show_viewer=False, max_episode_steps=100000, render_every_n_frames=100)
         if args.save_images:
             print("Simulation will run in headless mode with image saving enabled")
     else:
