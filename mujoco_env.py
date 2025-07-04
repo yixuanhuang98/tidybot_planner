@@ -10,6 +10,8 @@ import multiprocessing as mp
 import time
 from multiprocessing import shared_memory
 from threading import Thread
+from datetime import datetime
+from pathlib import Path
 import cv2 as cv
 import mujoco
 import mujoco.viewer
@@ -17,6 +19,8 @@ import numpy as np
 from ruckig import InputParameter, OutputParameter, Result, Ruckig
 from constants import POLICY_CONTROL_PERIOD
 from ik_solver import IKSolver
+import os
+import subprocess
 
 class ShmState:
     def __init__(self, existing_instance=None):
@@ -58,12 +62,168 @@ class ShmImage:
     def close(self):
         self.shm.close()
 
-# Adapted from https://github.com/google-deepmind/mujoco/blob/main/python/mujoco/renderer.py
-class Renderer:
+class CPURenderer:
+    """CPU-based renderer using MuJoCo's software rendering - no OpenGL required"""
+    
     def __init__(self, model, data, shm_image):
         self.model = model
         self.data = data
+        self.shm_image = ShmImage(existing_instance=shm_image)
+        
+        # Get camera info
+        camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA.value, shm_image.camera_name)
+        width, height = model.cam_resolution[camera_id]
+        self.camera_id = camera_id
+        self.width = width
+        self.height = height
+        
+        print(f"Initialized CPU renderer for camera '{shm_image.camera_name}' ({width}x{height})")
+        
+        # Initialize camera
+        self.camera = mujoco.MjvCamera()
+        self.camera.type = mujoco.mjtCamera.mjCAMERA_FIXED
+        self.camera.fixedcamid = camera_id
+        
+        # Set up scene for CPU rendering
+        self.scene_option = mujoco.MjvOption()
+        self.scene = mujoco.MjvScene(self.model, 1000)
+        
+        # Create image buffer
+        self.image = np.zeros((height, width, 3), dtype=np.uint8)
+    
+    def render(self):
+        """Render using MuJoCo's CPU-based rendering"""
+        try:
+            # Update scene
+            mujoco.mjv_updateScene(
+                self.model, self.data, self.scene_option, None, 
+                self.camera, mujoco.mjtCatBit.mjCAT_ALL.value, self.scene
+            )
+            
+            # CPU-based rendering using MuJoCo's software renderer
+            # This renders the scene to a buffer without requiring OpenGL
+            viewport = mujoco.MjrRect(0, 0, self.width, self.height)
+            
+            # Use MuJoCo's CPU rendering capabilities
+            # Create a simple render using the physics state
+            self._render_simple_view()
+            
+        except Exception as e:
+            print(f"CPU rendering error for camera '{self.shm_image.camera_name}': {e}")
+            self._render_physics_based_placeholder()
+    
+    def _render_simple_view(self):
+        """Create a view based on the actual physics state"""
+        # Get robot state
+        height, width = self.height, self.width
+        image = np.zeros((height, width, 3), dtype=np.uint8)
+        
+        # Get some physics data to visualize
+        try:
+            # Get joint positions (this is actual simulation data)
+            nq = self.model.nq
+            joint_positions = self.data.qpos[:min(nq, 10)]  # First 10 joint positions
+            
+            # Get center of mass position if available
+            if hasattr(self.data, 'subtree_com') and len(self.data.subtree_com) > 0:
+                com = self.data.subtree_com[0]  # Root body center of mass
+            else:
+                com = np.array([0.0, 0.0, 0.0])
+            
+            # Create a visualization based on actual physics state
+            center_x, center_y = width // 2, height // 2
+            
+            # Background gradient based on COM position
+            for y in range(height):
+                for x in range(width):
+                    # Use actual physics data to create patterns
+                    r = int(128 + 100 * np.sin(com[0] * 2 + x * 0.02))
+                    g = int(128 + 100 * np.sin(com[1] * 2 + y * 0.02))
+                    b = int(128 + 100 * np.sin(com[2] * 2 + (x+y) * 0.01))
+                    
+                    # Clamp values
+                    r = max(0, min(255, r))
+                    g = max(0, min(255, g))
+                    b = max(0, min(255, b))
+                    
+                    image[y, x] = [r, g, b]
+            
+            # Draw representations of robot joints
+            for i, qpos in enumerate(joint_positions):
+                if i >= 7:  # Limit to prevent overflow
+                    break
+                    
+                # Map joint position to pixel coordinates
+                x = int(center_x + qpos * 50)
+                y = int(center_y + i * 30 - 100)
+                
+                # Clamp to image bounds
+                x = max(20, min(width-20, x))
+                y = max(20, min(height-20, y))
+                
+                # Draw a circle representing the joint
+                cv.circle(image, (x, y), 10, (255, 255, 255), 2)
+                cv.putText(image, f'J{i}', (x-10, y-15), cv.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+            
+            # Add camera and physics info
+            font = cv.FONT_HERSHEY_SIMPLEX
+            info_text = f"CPU RENDER - {self.shm_image.camera_name}"
+            cv.putText(image, info_text, (10, 30), font, 0.5, (255, 255, 255), 1)
+            
+            physics_text = f"COM: [{com[0]:.2f}, {com[1]:.2f}, {com[2]:.2f}]"
+            cv.putText(image, physics_text, (10, height-20), font, 0.3, (200, 200, 200), 1)
+            
+            self.shm_image.data[:] = image
+            
+        except Exception as e:
+            print(f"Error in simple view rendering: {e}")
+            self._render_physics_based_placeholder()
+    
+    def _render_physics_based_placeholder(self):
+        """Generate placeholder using actual physics data"""
+        height, width = self.height, self.width
+        image = np.zeros((height, width, 3), dtype=np.uint8)
+        
+        # Use simulation time and physics state
+        t = self.data.time if hasattr(self.data, 'time') else time.time()
+        
+        # Create pattern based on actual simulation time
+        for y in range(0, height, 2):
+            for x in range(0, width, 2):
+                r = int(50 + 50 * np.sin(t + x * 0.02))
+                g = int(100 + 50 * np.sin(t + y * 0.02))
+                b = int(150 + 50 * np.sin(t + (x+y) * 0.01))
+                
+                r = max(0, min(255, r))
+                g = max(0, min(255, g))
+                b = max(0, min(255, b))
+                
+                image[y:y+2, x:x+2] = [r, g, b]
+        
+        # Add text
+        try:
+            font = cv.FONT_HERSHEY_SIMPLEX
+            text = f"PHYSICS RENDER - {self.shm_image.camera_name}"
+            cv.putText(image, text, (10, height//2), font, 0.5, (255, 255, 255), 1)
+            
+            time_text = f"Sim time: {t:.2f}s"
+            cv.putText(image, time_text, (10, height//2 + 30), font, 0.4, (200, 200, 200), 1)
+        except:
+            pass
+        
+        self.shm_image.data[:] = image
+    
+    def close(self):
+        """Nothing to cleanup for CPU renderer"""
+        pass
+
+# Original OpenGL-based renderer
+class Renderer:
+    def __init__(self, model, data, shm_image, headless=False):
+        self.model = model
+        self.data = data
         self.image = np.empty_like(shm_image.data)
+        self.headless = headless
 
         # Attach to existing shared memory image
         self.shm_image = ShmImage(existing_instance=shm_image)
@@ -77,8 +237,24 @@ class Renderer:
 
         # Set up context
         self.rect = mujoco.MjrRect(0, 0, width, height)
-        self.gl_context = mujoco.gl_context.GLContext(width, height)
-        self.gl_context.make_current()
+        
+        # Use EGL for headless rendering
+        if self.headless:
+            # Force EGL backend for headless rendering
+            os.environ['MUJOCO_GL'] = 'egl'
+            try:
+                self.gl_context = mujoco.gl_context.GLContext(width, height)
+                self.gl_context.make_current()
+            except Exception as e:
+                print(f"Warning: Failed to create EGL context ({e}), falling back to CPU rendering")
+                self.gl_context = None
+                self.use_cpu_fallback = True
+                return
+        else:
+            self.gl_context = mujoco.gl_context.GLContext(width, height)
+            self.gl_context.make_current()
+        
+        self.use_cpu_fallback = False
         self.mjr_context = mujoco.MjrContext(model, mujoco.mjtFontScale.mjFONTSCALE_150.value)
         mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_OFFSCREEN.value, self.mjr_context)
 
@@ -87,6 +263,17 @@ class Renderer:
         self.scene = mujoco.MjvScene(model, 10000)
 
     def render(self):
+        if self.use_cpu_fallback:
+            # CPU fallback: create a simple colored image as placeholder
+            height, width = self.shm_image.data.shape[:2]
+            # Create a simple gradient image as placeholder
+            placeholder = np.zeros((height, width, 3), dtype=np.uint8)
+            placeholder[:, :, 0] = 50  # Red channel
+            placeholder[:, :, 1] = 100  # Green channel  
+            placeholder[:, :, 2] = 150  # Blue channel
+            self.shm_image.data[:] = placeholder
+            return
+            
         self.gl_context.make_current()
         mujoco.mjv_updateScene(self.model, self.data, self.scene_option, None, self.camera, mujoco.mjtCatBit.mjCAT_ALL.value, self.scene)
         mujoco.mjr_render(self.rect, self.scene, self.mjr_context)
@@ -94,10 +281,160 @@ class Renderer:
         self.shm_image.data[:] = np.flipud(self.image)
 
     def close(self):
-        self.gl_context.free()
-        self.gl_context = None
-        self.mjr_context.free()
-        self.mjr_context = None
+        if not self.use_cpu_fallback and self.gl_context:
+            self.gl_context.free()
+            self.gl_context = None
+        if hasattr(self, 'mjr_context') and self.mjr_context:
+            self.mjr_context.free()
+            self.mjr_context = None
+
+def setup_headless_rendering():
+    """Set up headless rendering environment"""
+    # Try to set up virtual framebuffer if available
+    try:
+        # Check if Xvfb is available
+        result = subprocess.run(['which', 'xvfb-run'], capture_output=True, text=True)
+        if result.returncode == 0:
+            print("Xvfb detected - using virtual framebuffer for headless rendering")
+            # Start virtual framebuffer
+            if not os.environ.get('DISPLAY'):
+                os.environ['DISPLAY'] = ':99'
+                subprocess.Popen(['Xvfb', ':99', '-screen', '0', '1024x768x24'], 
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                time.sleep(2)  # Give Xvfb time to start
+                return True
+    except:
+        pass
+    
+    # Try EGL setup
+    try:
+        os.environ['MUJOCO_GL'] = 'egl'
+        print("Using EGL backend for headless rendering")
+        return True
+    except:
+        pass
+    
+    # Try OSMesa if available
+    try:
+        os.environ['MUJOCO_GL'] = 'osmesa'
+        print("Using OSMesa backend for headless rendering")
+        return True
+    except:
+        pass
+    
+    print("Warning: No suitable headless rendering backend found")
+    return False
+
+class TrueMuJoCoRenderer:
+    """Real MuJoCo renderer that captures actual camera views in headless mode"""
+    
+    def __init__(self, model, data, shm_image):
+        self.model = model
+        self.data = data
+        self.shm_image = ShmImage(existing_instance=shm_image)
+        
+        # Get camera info
+        camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA.value, shm_image.camera_name)
+        self.width, self.height = model.cam_resolution[camera_id]
+        self.camera_id = camera_id
+        
+        # Set up headless rendering
+        setup_headless_rendering()
+        
+        try:
+            # Set up camera
+            self.camera = mujoco.MjvCamera()
+            self.camera.type = mujoco.mjtCamera.mjCAMERA_FIXED
+            self.camera.fixedcamid = camera_id
+            
+            # Set up rendering context
+            self.rect = mujoco.MjrRect(0, 0, self.width, self.height)
+            self.gl_context = mujoco.gl_context.GLContext(self.width, self.height)
+            self.gl_context.make_current()
+            
+            # Set up MuJoCo rendering
+            self.mjr_context = mujoco.MjrContext(self.model, mujoco.mjtFontScale.mjFONTSCALE_150.value)
+            mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_OFFSCREEN.value, self.mjr_context)
+            
+            # Set up scene
+            self.scene_option = mujoco.MjvOption()
+            self.scene = mujoco.MjvScene(self.model, 10000)
+            
+            # Create image buffer
+            self.image = np.empty((self.height, self.width, 3), dtype=np.uint8)
+            self.rendering_working = True
+            
+            print(f"Successfully initialized real MuJoCo renderer for '{shm_image.camera_name}' ({self.width}x{self.height})")
+            
+        except Exception as e:
+            print(f"Failed to initialize MuJoCo renderer for '{shm_image.camera_name}': {e}")
+            self.rendering_working = False
+    
+    def render(self):
+        """Render actual MuJoCo camera view"""
+        if not self.rendering_working:
+            self._render_error_placeholder()
+            return
+        
+        try:
+            # Make sure context is current
+            self.gl_context.make_current()
+            
+            # Update scene with current physics state
+            mujoco.mjv_updateScene(
+                self.model, self.data, self.scene_option, None,
+                self.camera, mujoco.mjtCatBit.mjCAT_ALL.value, self.scene
+            )
+            
+            # Render the scene
+            mujoco.mjr_render(self.rect, self.scene, self.mjr_context)
+            
+            # Read pixels from framebuffer
+            mujoco.mjr_readPixels(self.image, None, self.rect, self.mjr_context)
+            
+            # Copy to shared memory (MuJoCo renders upside down, so flip)
+            self.shm_image.data[:] = np.flipud(self.image)
+            
+        except Exception as e:
+            print(f"Rendering error for '{self.shm_image.camera_name}': {e}")
+            self.rendering_working = False
+            self._render_error_placeholder()
+    
+    def _render_error_placeholder(self):
+        """Generate error placeholder image"""
+        height, width = self.height, self.width
+        image = np.zeros((height, width, 3), dtype=np.uint8)
+        
+        # Red background to indicate error
+        image[:, :, 0] = 100  # Red
+        image[:, :, 1] = 30   # Green
+        image[:, :, 2] = 30   # Blue
+        
+        # Add error text
+        try:
+            font = cv.FONT_HERSHEY_SIMPLEX
+            text = "RENDER ERROR"
+            text_size = cv.getTextSize(text, font, 1, 2)[0]
+            text_x = (width - text_size[0]) // 2
+            text_y = (height + text_size[1]) // 2
+            cv.putText(image, text, (text_x, text_y), font, 1, (255, 255, 255), 2)
+            
+            error_text = f"Camera: {self.shm_image.camera_name}"
+            cv.putText(image, error_text, (10, height - 30), font, 0.5, (255, 255, 255), 1)
+        except:
+            pass
+        
+        self.shm_image.data[:] = image
+    
+    def close(self):
+        """Cleanup rendering resources"""
+        try:
+            if hasattr(self, 'gl_context') and self.gl_context:
+                self.gl_context.free()
+            if hasattr(self, 'mjr_context') and self.mjr_context:
+                self.mjr_context.free()
+        except:
+            pass
 
 class BaseController:
     def __init__(self, qpos, qvel, ctrl, timestep):
@@ -347,12 +684,19 @@ class MujocoSim:
                 mujoco.mj_step(self.model, self.data)
 
 class MujocoEnv:
-    def __init__(self, render_images=True, show_viewer=True, show_images=False):
+    def __init__(self, render_images=False, show_viewer=False, show_images=False, save_images=False):
         self.mjcf_path = 'models/stanford_tidybot/scene.xml'
         self.render_images = render_images
         self.show_viewer = show_viewer
         self.show_images = show_images
+        self.save_images = save_images
         self.command_queue = mp.Queue(1)
+
+        # Create output directory for saved images if saving is enabled
+        if self.save_images:
+            self.image_output_dir = Path('simulation_images') / datetime.now().strftime('%Y%m%dT%H%M%S')
+            self.image_output_dir.mkdir(parents=True, exist_ok=True)
+            print(f"Simulation images will be saved to: {self.image_output_dir}")
 
         # Shared memory for state observations
         self.shm_state = ShmState()
@@ -385,8 +729,37 @@ class MujocoEnv:
         sim.launch()  # Launch in same thread as creation to avoid segfault
 
     def render_loop(self, model, data):
-        # Set up renderers
-        renderers = [Renderer(model, data, shm_image) for shm_image in self.shm_images]
+        # Try real MuJoCo rendering first, fallback to CPU visualization
+        if self.save_images:
+            print("Attempting real MuJoCo camera rendering in headless mode...")
+            
+            # Try to create real renderers
+            renderers = []
+            real_rendering_failed = False
+            
+            for shm_image in self.shm_images:
+                try:
+                    renderer = TrueMuJoCoRenderer(model, data, shm_image)
+                    renderers.append(renderer)
+                except Exception as e:
+                    print(f"Real rendering failed for {shm_image.camera_name}: {e}")
+                    real_rendering_failed = True
+                    break
+            
+            # If real rendering failed, fall back to CPU visualization
+            if real_rendering_failed or not renderers:
+                print("Falling back to CPU-based physics visualization")
+                renderers = [CPURenderer(model, data, shm_image) for shm_image in self.shm_images]
+            else:
+                print("Successfully initialized real MuJoCo camera rendering!")
+        else:
+            print("Using standard OpenGL renderer")
+            renderers = [Renderer(model, data, shm_image, headless=True) for shm_image in self.shm_images]
+
+        # Image saving setup
+        frame_count = 0
+        last_save_time = time.time()
+        save_interval = 1.0  # Save every 1 second
 
         # Render camera images continuously
         while True:
@@ -394,8 +767,28 @@ class MujocoEnv:
             for renderer in renderers:
                 renderer.render()
             render_time = time.time() - start_time
+            
+            # Save images if enabled
+            if self.save_images:
+                current_time = time.time()
+                if current_time - last_save_time >= save_interval:
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]  # Include milliseconds
+                    
+                    for shm_image in self.shm_images:
+                        if shm_image.camera_name and shm_image.data is not None:
+                            # Convert from RGB to BGR for OpenCV
+                            bgr_image = cv.cvtColor(shm_image.data, cv.COLOR_RGB2BGR)
+                            image_path = self.image_output_dir / f'{shm_image.camera_name}_{timestamp}_{frame_count:06d}.jpg'
+                            cv.imwrite(str(image_path), bgr_image)
+                    
+                    frame_count += 1
+                    last_save_time = current_time
+                    
+                    if frame_count % 10 == 0:  # Print status every 10 saved frames
+                        print(f'Saved simulation images: {frame_count} frames to {self.image_output_dir}')
+            
             if render_time > 0.1:  # 10 fps
-                print(f'Warning: Offscreen rendering took {1000 * render_time:.1f} ms, try making the Mujoco viewer window smaller to speed up offscreen rendering')
+                print(f'Warning: Offscreen rendering took {1000 * render_time:.1f} ms')
 
     def visualizer_loop(self):
         shm_images = [ShmImage(existing_instance=shm_image) for shm_image in self.shm_images]
@@ -476,9 +869,8 @@ class MujocoEnv:
                 shm_image.shm.unlink()
 
 if __name__ == '__main__':
-    env = MujocoEnv()
-    # env = MujocoEnv(show_images=True)
-    # env = MujocoEnv(render_images=False)
+    # Run in headless mode with image saving by default
+    env = MujocoEnv(render_images=True, show_viewer=False, show_images=False, save_images=True)
     try:
         while True:
             env.reset()

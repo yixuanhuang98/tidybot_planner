@@ -84,10 +84,11 @@ def main(args):
     # Create env
     if args.sim:
         from mujoco_env import MujocoEnv
-        if args.teleop:
-            env = MujocoEnv(show_images=True)
-        else:
-            env = MujocoEnv()
+        # Use headless mode but enable rendering if saving images
+        render_images = args.save_images
+        env = MujocoEnv(render_images=render_images, show_viewer=False, show_images=False, save_images=args.save_images)
+        if args.save_images:
+            print("Simulation will run in headless mode with image saving enabled")
     else:
         from real_env import RealEnv
         env = RealEnv()
@@ -119,5 +120,6 @@ if __name__ == '__main__':
     parser.add_argument('--goto-cabinet-handle', action='store_true', help='Move gripper to left cabinet handle pose')
     parser.add_argument('--goto-cabinet-handle-right', action='store_true', help='Move gripper to right cabinet handle pose')
     parser.add_argument('--save', action='store_true')
+    parser.add_argument('--save-images', action='store_true', help='Save rendered simulation images to disk (headless)')
     parser.add_argument('--output-dir', default='data/demos')
     main(parser.parse_args())

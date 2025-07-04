@@ -4,6 +4,8 @@
 import math
 import time
 from collections import deque
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for headless mode
 import matplotlib.pyplot as plt
 import numpy as np
 import redis
@@ -11,30 +13,41 @@ import redis
 ROBOT_WIDTH = 0.5  # Note: Approximate value
 
 class Visualizer:
-    def __init__(self):
-        # Odometry figure
-        plt.figure('Odometry')
-        plt.axis([-1, 1, -1, 1])
-        self.fig_axis = plt.gca()
-        self.fig_axis.set_aspect('equal')
-        plt.grid(which='both')
-        self.robot_line, = plt.plot([], color='tab:gray')
-        self.robot_arrow = plt.arrow(0, 0, 0, 0, head_width=0)
-        self.odom_line, = plt.plot([], '--', color='tab:blue')
+    def __init__(self, headless=True):
+        self.headless = headless
+        
+        if not self.headless:
+            # Odometry figure
+            plt.figure('Odometry')
+            plt.axis([-1, 1, -1, 1])
+            self.fig_axis = plt.gca()
+            self.fig_axis.set_aspect('equal')
+            plt.grid(which='both')
+            self.robot_line, = plt.plot([], color='tab:gray')
+            self.robot_arrow = plt.arrow(0, 0, 0, 0, head_width=0)
+            self.odom_line, = plt.plot([], '--', color='tab:blue')
 
-        # Velocity figure
-        plt.figure('Velocity')
-        self.vel_fig_axis = plt.gca()
-        self.vel_x_line, = plt.plot([], label='x')
-        self.vel_y_line, = plt.plot([], label='y')
-        self.vel_th_line, = plt.plot([], label='θ')
-        plt.grid(True)
-        plt.legend()
+            # Velocity figure
+            plt.figure('Velocity')
+            self.vel_fig_axis = plt.gca()
+            self.vel_x_line, = plt.plot([], label='x')
+            self.vel_y_line, = plt.plot([], label='y')
+            self.vel_th_line, = plt.plot([], label='θ')
+            plt.grid(True)
+            plt.legend()
 
-        # Bring to foreground
-        plt.figure('Odometry')
+            # Bring to foreground
+            plt.figure('Odometry')
 
     def draw(self, x, t_data, x_data, dx_data):
+        if self.headless:
+            # In headless mode, just print status instead of plotting
+            print(f"Robot position: x={x[0]:.3f}, y={x[1]:.3f}, θ={x[2]:.3f} rad")
+            if len(dx_data) > 0:
+                latest_vel = dx_data[-1]
+                print(f"Robot velocity: dx={latest_vel[0]:.3f}, dy={latest_vel[1]:.3f}, dθ={latest_vel[2]:.3f} rad/s")
+            return
+            
         # Robot outline
         th = x[2]
         angles = th + np.radians([135, 45, -45, -135], dtype=np.float32)
@@ -66,22 +79,28 @@ class Visualizer:
         self.vel_fig_axis.autoscale()
         plt.pause(0.001)
 
-def main(remote_host):
-    robot_client = redis.Redis(remote_host)
-    visualizer = Visualizer()
+# Main visualization loop
+visualizer = Visualizer(headless=True)  # Default to headless mode
+r = redis.Redis()
+x_data = deque(maxlen=100)
+t_data = deque(maxlen=100)
+dx_data = deque(maxlen=100)
 
-    history_len = 500
-    t_data = deque(maxlen=history_len)
-    x_data = deque(maxlen=history_len)
-    dx_data = deque(maxlen=history_len)
+print("Running base state visualization in headless mode.")
+print("Robot position and velocity will be printed to console.")
+print("To enable GUI plotting, change headless=True to headless=False in the code.")
 
-    while True:
-        t_data.append(time.time())
-        x = np.fromstring(robot_client.get('x'), sep=' ')
-        dx = np.fromstring(robot_client.get('dx'), sep=' ')
+while True:
+    try:
+        # Note: Redis format is 'x y th'
+        x = np.array(r.get('x').decode().split(), dtype=np.float32)
+        dx = np.array(r.get('dx').decode().split(), dtype=np.float32)
+        t = time.time()
         x_data.append(x)
+        t_data.append(t)
         dx_data.append(dx)
         visualizer.draw(x, t_data, x_data, dx_data)
-
-if __name__ == '__main__':
-    main('localhost')
+    except:
+        # Redis key does not exist
+        pass
+    time.sleep(0.1)
