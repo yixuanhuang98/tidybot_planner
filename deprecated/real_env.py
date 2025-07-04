@@ -1,11 +1,11 @@
 # Author: Jimmy Wu
 # Date: October 2024
 
-from cameras import KinovaCamera, LogitechCamera
+from env.real.cameras import KinovaCamera, LogitechCamera
 from constants import BASE_RPC_HOST, BASE_RPC_PORT, ARM_RPC_HOST, ARM_RPC_PORT, RPC_AUTHKEY
 from constants import BASE_CAMERA_SERIAL
-from arm_server import ArmManager
-from base_server import BaseManager
+from env.real.servers.arm_server import ArmManager
+from env.real.servers.base_server import BaseManager
 
 class RealEnv:
     def __init__(self):

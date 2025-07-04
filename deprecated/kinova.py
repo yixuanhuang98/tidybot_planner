@@ -90,7 +90,7 @@ class TorqueControlledArm:
         self.gripper_pos = 0
 
         # Pinocchio setup (only used in low-level servoing mode)
-        self.model = pin.buildModelFromUrdf('models/gen3_robotiq_2f_85.urdf')
+        self.model = pin.buildModelFromUrdf('env/assets/gen3_robotiq_2f_85.urdf')
         self.data = self.model.createData()
         self.q_pin = np.zeros(self.model.nq)
         self.tool_frame_id = self.model.getFrameId('tool_frame')

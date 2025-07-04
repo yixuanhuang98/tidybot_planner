@@ -13,7 +13,7 @@ import time
 import numpy as np
 import pygame
 from pygame.joystick import Joystick
-from base_controller import Vehicle
+from env.real.base_controller import Vehicle
 
 pygame.init()
 

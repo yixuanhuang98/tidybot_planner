@@ -10,7 +10,7 @@ import time
 import numpy as np
 from ruckig import InputParameter, OutputParameter, Result, Ruckig
 from constants import POLICY_CONTROL_PERIOD
-from kinova import TorqueControlledArm
+from deprecated.kinova import TorqueControlledArm
 
 ALPHA = 0.01
 K_r = np.diag([0.3, 0.3, 0.3, 0.3, 0.18, 0.18, 0.18])

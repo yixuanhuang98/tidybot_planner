@@ -8,8 +8,8 @@ from pathlib import Path
 from datetime import datetime
 import cv2 as cv
 from constants import POLICY_CONTROL_PERIOD
-from episode_storage import EpisodeReader
-from mujoco_env import MujocoEnv
+from deprecated.episode_storage import EpisodeReader
+from env.mujoco import BlocksEnv, CabinetEnv, DrawerEnv
 
 def replay_episode(env, episode_dir, show_images=False, execute_obs=False, save_images=False, output_dir=None):
     # Reset env
@@ -72,9 +72,9 @@ def main(args):
     if args.sim:
         # Enable rendering only if we need to show or save images
         render_images = args.show_images or args.save_images
-        env = MujocoEnv(render_images=render_images, show_viewer=False, show_images=False, save_images=False)
+        env = BlocksEnv(render_images=render_images, show_viewer=False, show_images=False, save_images=False)
     else:
-        from real_env import RealEnv
+        from env.real import RealEnv
         env = RealEnv()
 
     try:

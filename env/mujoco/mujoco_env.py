@@ -1,0 +1,479 @@
+import numpy as np
+from typing import Dict, Any, Tuple, Optional, List
+from abc import ABC, abstractmethod
+import gymnasium as gym
+from gymnasium.spaces import Box, Dict as DictSpace
+
+from env.base_env import BaseEnv
+from env.mujoco.mujoco_handler import MujocoHandler
+from env.state import EnvironmentState, Observation, Action
+
+
+class AbstractMujocoEnv(BaseEnv, ABC):
+    """Abstract MuJoCo environment that can be inherited by different scene types"""
+    
+    def __init__(self, mjcf_path: str, show_viewer: bool = False, render_images: bool = False,
+                 max_episode_steps: int = 1000):
+        
+        # Create handler
+        self.handler = MujocoHandler(mjcf_path=mjcf_path, 
+                                   show_viewer=show_viewer, 
+                                   render_images=render_images)
+        
+        # Initialize parent class
+        super().__init__(self.handler)
+        
+        # Environment parameters
+        self.max_episode_steps = max_episode_steps
+        self.current_step = 0
+        
+        # Episode tracking
+        self.episode_reward = 0.0
+        self.episode_success = False
+        
+        # Define observation and action spaces (to be set by subclasses)
+        self._observation_space = None
+        self._action_space = None
+        
+        # Setup spaces for this specific scene
+        self._setup_spaces()
+
+    @abstractmethod
+    def _setup_spaces(self):
+        """Set up observation and action spaces - must be implemented by subclasses"""
+        pass
+
+    @abstractmethod
+    def _get_scene_specific_observation(self, states: Dict[str, Any]) -> Dict[str, Any]:
+        """Get scene-specific observations - must be implemented by subclasses"""
+        pass
+
+    @abstractmethod
+    def _get_scene_specific_reward(self, states: Dict[str, Any]) -> float:
+        """Calculate scene-specific reward - must be implemented by subclasses"""
+        pass
+
+    @abstractmethod
+    def _get_scene_specific_success(self, states: Dict[str, Any]) -> bool:
+        """Check scene-specific success condition - must be implemented by subclasses"""
+        pass
+
+    @abstractmethod
+    def _get_scene_specific_termination(self, states: Dict[str, Any]) -> bool:
+        """Check scene-specific termination condition - must be implemented by subclasses"""
+        pass
+
+    def reset(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Reset environment and return initial observation"""
+        # Reset handler
+        self.handler.set_states()  # Reset without action
+        
+        # Wait for state to be updated
+        import time
+        time.sleep(0.1)
+        
+        # Reset episode tracking
+        self.current_step = 0
+        self.episode_reward = 0.0
+        self.episode_success = False
+        
+        # Get initial observation
+        states = self.handler.get_states()
+        observation = self.get_observation(states)
+        info = self.handler.get_extra()
+        
+        return observation, info
+
+    def step(self, action: np.ndarray) -> Tuple[Dict[str, Any], float, bool, bool, bool, Dict[str, Any]]:
+        """Execute one environment step"""
+        # Convert action array to Action object
+        action_obj = self._array_to_action(action)
+        
+        # Execute action
+        self.handler.set_states(action_obj)
+        self.handler.step()
+        
+        # Get new state
+        states = self.handler.get_states()
+        observation = self.get_observation(states)
+        
+        # Calculate reward and termination
+        reward = self.get_reward(states)
+        success = self.get_success(states)
+        terminated = self.get_termination(states)
+        truncated = self.get_timeout(states)
+        
+        # Update episode tracking
+        self.current_step += 1
+        self.episode_reward += reward
+        self.episode_success = self.episode_success or success
+        
+        # Get extra info
+        info = self.handler.get_extra()
+        info.update({
+            'episode_step': self.current_step,
+            'episode_reward': self.episode_reward,
+            'success': success
+        })
+        
+        return observation, reward, success, terminated, truncated, info
+
+    def _array_to_action(self, action: np.ndarray) -> Action:
+        """Convert action array to Action object"""
+        if len(action) != 11:
+            raise ValueError(f"Expected action array of length 11, got {len(action)}")
+        
+        return Action(
+            base_pose=action[:3],
+            arm_pos=action[3:6],
+            arm_quat=action[6:10],
+            gripper_pos=action[10]
+        )
+
+    def get_observation(self, states: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract observation from states"""
+        observation = {}
+        
+        # Base robot observations (common to all scenes)
+        observation.update(self._get_base_robot_observation(states))
+        
+        # Scene-specific observations
+        observation.update(self._get_scene_specific_observation(states))
+        
+        return observation
+
+    def _get_base_robot_observation(self, states: Dict[str, Any]) -> Dict[str, Any]:
+        """Get base robot observations common to all scenes"""
+        return {
+            'base_pose': states['base_pose'].astype(np.float32),
+            'arm_pos': states['arm_pos'].astype(np.float32),
+            'arm_quat': states['arm_quat'].astype(np.float32),
+            'gripper_pos': np.array([states['gripper_pos']], dtype=np.float32)
+        }
+
+    def get_reward(self, states: Dict[str, Any]) -> float:
+        """Calculate reward from states"""
+        # Base reward (common to all scenes)
+        reward = self._get_base_reward(states)
+        
+        # Scene-specific reward
+        reward += self._get_scene_specific_reward(states)
+        
+        return reward
+
+    def _get_base_reward(self, states: Dict[str, Any]) -> float:
+        """Get base reward common to all scenes"""
+        reward = 0.0
+        
+        # Small negative reward for each step to encourage efficiency
+        reward -= 0.01
+        
+        # Penalty for excessive base movement
+        base_pose = states['base_pose']
+        base_movement = np.linalg.norm(base_pose[:2])
+        if base_movement > 1.0:
+            reward -= 0.1
+        
+        return reward
+
+    def get_success(self, states: Dict[str, Any]) -> bool:
+        """Check if task was successful"""
+        return self._get_scene_specific_success(states)
+
+    def get_termination(self, states: Dict[str, Any]) -> bool:
+        """Check if episode should terminate"""
+        # Base termination conditions
+        if self._get_base_termination(states):
+            return True
+        
+        # Scene-specific termination
+        return self._get_scene_specific_termination(states)
+
+    def _get_base_termination(self, states: Dict[str, Any]) -> bool:
+        """Check base termination conditions common to all scenes"""
+        # Terminate if robot goes too far from origin
+        base_pose = states['base_pose']
+        base_distance = np.linalg.norm(base_pose[:2])
+        
+        if base_distance > 3.0:
+            return True
+        
+        # Terminate if arm goes to unsafe position
+        arm_pos = states['arm_pos']
+        if arm_pos[2] < -0.1:  # Below table
+            return True
+        
+        return False
+
+    def get_timeout(self, states: Dict[str, Any]) -> bool:
+        """Check if episode timed out"""
+        return self.current_step >= self.max_episode_steps
+
+    def render(self) -> Optional[Dict[str, Any]]:
+        """Render the environment"""
+        return self.handler.render()
+
+    def close(self):
+        """Close the environment"""
+        self.handler.close()
+
+    @property
+    def observation_space(self):
+        """Get observation space"""
+        return self._observation_space
+
+    @property
+    def action_space(self):
+        """Get action space"""
+        return self._action_space
+
+
+class BlocksEnv(AbstractMujocoEnv):
+    """Environment for block manipulation tasks"""
+    
+    def __init__(self, show_viewer: bool = False, render_images: bool = False,
+                 max_episode_steps: int = 1000):
+        super().__init__(
+            mjcf_path="env/assets/stanford_tidybot/scene.xml",
+            show_viewer=show_viewer,
+            render_images=render_images,
+            max_episode_steps=max_episode_steps
+        )
+
+    def _setup_spaces(self):
+        """Set up observation and action spaces for blocks environment"""
+        # Action space: base pose (3), arm pose (3), arm quat (4), gripper (1)
+        self._action_space = Box(
+            low=np.array([-2.0, -2.0, -np.pi, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 0.0]),
+            high=np.array([2.0, 2.0, np.pi, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
+            dtype=np.float32
+        )
+        
+        # Observation space: robot state + cube states
+        obs_dict = {
+            'base_pose': Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
+            'arm_pos': Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
+            'arm_quat': Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32),
+            'gripper_pos': Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32),
+        }
+        
+        # Add cube observations
+        for obj_name in ['cube1', 'cube2', 'cube3']:
+            obs_dict[f'{obj_name}_pos'] = Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32)
+            obs_dict[f'{obj_name}_quat'] = Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
+        
+        self._observation_space = DictSpace(obs_dict)
+
+    def _get_scene_specific_observation(self, states: Dict[str, Any]) -> Dict[str, Any]:
+        """Get cube observations"""
+        observation = {}
+        
+        # Cube observations
+        for obj_name in ['cube1', 'cube2', 'cube3']:
+            if f'{obj_name}_pos' in states:
+                observation[f'{obj_name}_pos'] = states[f'{obj_name}_pos'].astype(np.float32)
+            else:
+                observation[f'{obj_name}_pos'] = np.zeros(3, dtype=np.float32)
+            
+            if f'{obj_name}_quat' in states:
+                observation[f'{obj_name}_quat'] = states[f'{obj_name}_quat'].astype(np.float32)
+            else:
+                observation[f'{obj_name}_quat'] = np.array([0., 0., 0., 1.], dtype=np.float32)
+        
+        return observation
+
+    def _get_scene_specific_reward(self, states: Dict[str, Any]) -> float:
+        """Calculate reward for block manipulation"""
+        reward = 0.0
+        
+        # Reward for keeping arm in reasonable workspace
+        arm_pos = states['arm_pos']
+        workspace_center = np.array([0.55, 0.0, 0.4])
+        arm_distance = np.linalg.norm(arm_pos - workspace_center)
+        if arm_distance < 0.5:
+            reward += 0.1
+        
+        # Reward for cube stacking (example task)
+        cube1_pos = states.get('cube1_pos', np.zeros(3))
+        cube2_pos = states.get('cube2_pos', np.zeros(3))
+        cube3_pos = states.get('cube3_pos', np.zeros(3))
+        
+        # Reward for vertical stacking
+        if abs(cube1_pos[0] - cube2_pos[0]) < 0.05 and abs(cube1_pos[1] - cube2_pos[1]) < 0.05:
+            height_diff = abs(cube2_pos[2] - cube1_pos[2])
+            if 0.05 < height_diff < 0.15:  # Proper stacking height
+                reward += 1.0
+        
+        return reward
+
+    def _get_scene_specific_success(self, states: Dict[str, Any]) -> bool:
+        """Check if blocks are successfully stacked"""
+        cube1_pos = states.get('cube1_pos', np.zeros(3))
+        cube2_pos = states.get('cube2_pos', np.zeros(3))
+        
+        # Success if cubes are stacked
+        horizontal_distance = np.linalg.norm(cube1_pos[:2] - cube2_pos[:2])
+        height_diff = abs(cube2_pos[2] - cube1_pos[2])
+        
+        return horizontal_distance < 0.05 and 0.05 < height_diff < 0.15
+
+    def _get_scene_specific_termination(self, states: Dict[str, Any]) -> bool:
+        """Check if blocks have fallen off table"""
+        for obj_name in ['cube1', 'cube2', 'cube3']:
+            pos = states.get(f'{obj_name}_pos', np.zeros(3))
+            if pos[2] < -0.1:  # Below table
+                return True
+        
+        return False
+
+
+class CabinetEnv(AbstractMujocoEnv):
+    """Environment for cabinet manipulation tasks"""
+    
+    def __init__(self, show_viewer: bool = False, render_images: bool = False,
+                 max_episode_steps: int = 1000):
+        super().__init__(
+            mjcf_path="env/assets/stanford_tidybot/scene.xml",
+            show_viewer=show_viewer,
+            render_images=render_images,
+            max_episode_steps=max_episode_steps
+        )
+
+    def _setup_spaces(self):
+        """Set up observation and action spaces for cabinet environment"""
+        # Action space: base pose (3), arm pose (3), arm quat (4), gripper (1)
+        self._action_space = Box(
+            low=np.array([-2.0, -2.0, -np.pi, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 0.0]),
+            high=np.array([2.0, 2.0, np.pi, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
+            dtype=np.float32
+        )
+        
+        # Observation space: robot state + door positions
+        obs_dict = {
+            'base_pose': Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
+            'arm_pos': Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
+            'arm_quat': Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32),
+            'gripper_pos': Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32),
+            'leftdoor_pos': Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
+            'rightdoor_pos': Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
+        }
+        
+        self._observation_space = DictSpace(obs_dict)
+
+    def _get_scene_specific_observation(self, states: Dict[str, Any]) -> Dict[str, Any]:
+        """Get cabinet door observations"""
+        return {
+            'leftdoor_pos': states.get('leftdoor_pos', np.zeros(3)).astype(np.float32),
+            'rightdoor_pos': states.get('rightdoor_pos', np.zeros(3)).astype(np.float32),
+        }
+
+    def _get_scene_specific_reward(self, states: Dict[str, Any]) -> float:
+        """Calculate reward for cabinet manipulation"""
+        reward = 0.0
+        
+        # Reward for getting close to door handles
+        arm_pos = states['arm_pos']
+        leftdoor_pos = states.get('leftdoor_pos', np.zeros(3))
+        rightdoor_pos = states.get('rightdoor_pos', np.zeros(3))
+        
+        # Distance to nearest door handle
+        left_distance = np.linalg.norm(arm_pos - leftdoor_pos)
+        right_distance = np.linalg.norm(arm_pos - rightdoor_pos)
+        min_distance = min(left_distance, right_distance)
+        
+        if min_distance < 0.2:
+            reward += 0.5
+        if min_distance < 0.1:
+            reward += 1.0
+        
+        return reward
+
+    def _get_scene_specific_success(self, states: Dict[str, Any]) -> bool:
+        """Check if cabinet door is successfully opened"""
+        # Success if gripper is close to handle and gripper is closed
+        arm_pos = states['arm_pos']
+        gripper_pos = states['gripper_pos']
+        
+        leftdoor_pos = states.get('leftdoor_pos', np.zeros(3))
+        rightdoor_pos = states.get('rightdoor_pos', np.zeros(3))
+        
+        left_distance = np.linalg.norm(arm_pos - leftdoor_pos)
+        right_distance = np.linalg.norm(arm_pos - rightdoor_pos)
+        min_distance = min(left_distance, right_distance)
+        
+        return min_distance < 0.05 and gripper_pos < 0.1
+
+    def _get_scene_specific_termination(self, states: Dict[str, Any]) -> bool:
+        """Check cabinet-specific termination conditions"""
+        # No additional termination conditions for cabinet
+        return False
+
+
+class DrawerEnv(AbstractMujocoEnv):
+    """Environment for drawer manipulation tasks"""
+    
+    def __init__(self, show_viewer: bool = False, render_images: bool = False,
+                 max_episode_steps: int = 1000):
+        super().__init__(
+            mjcf_path="env/assets/stanford_tidybot/drawer_scene.xml",  # Assume different scene
+            show_viewer=show_viewer,
+            render_images=render_images,
+            max_episode_steps=max_episode_steps
+        )
+
+    def _setup_spaces(self):
+        """Set up observation and action spaces for drawer environment"""
+        # Action space: base pose (3), arm pose (3), arm quat (4), gripper (1)
+        self._action_space = Box(
+            low=np.array([-2.0, -2.0, -np.pi, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 0.0]),
+            high=np.array([2.0, 2.0, np.pi, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
+            dtype=np.float32
+        )
+        
+        # Observation space: robot state + drawer handle position
+        obs_dict = {
+            'base_pose': Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
+            'arm_pos': Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
+            'arm_quat': Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32),
+            'gripper_pos': Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32),
+            'drawer_handle_pos': Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
+        }
+        
+        self._observation_space = DictSpace(obs_dict)
+
+    def _get_scene_specific_observation(self, states: Dict[str, Any]) -> Dict[str, Any]:
+        """Get drawer handle observations"""
+        return {
+            'drawer_handle_pos': states.get('drawer_handle_pos', np.zeros(3)).astype(np.float32),
+        }
+
+    def _get_scene_specific_reward(self, states: Dict[str, Any]) -> float:
+        """Calculate reward for drawer manipulation"""
+        reward = 0.0
+        
+        # Reward for getting close to drawer handle
+        arm_pos = states['arm_pos']
+        handle_pos = states.get('drawer_handle_pos', np.zeros(3))
+        
+        distance = np.linalg.norm(arm_pos - handle_pos)
+        if distance < 0.2:
+            reward += 0.5
+        if distance < 0.1:
+            reward += 1.0
+        
+        return reward
+
+    def _get_scene_specific_success(self, states: Dict[str, Any]) -> bool:
+        """Check if drawer is successfully opened"""
+        # Success if gripper is close to handle and gripper is closed
+        arm_pos = states['arm_pos']
+        gripper_pos = states['gripper_pos']
+        handle_pos = states.get('drawer_handle_pos', np.zeros(3))
+        
+        distance = np.linalg.norm(arm_pos - handle_pos)
+        return distance < 0.05 and gripper_pos < 0.1
+
+    def _get_scene_specific_termination(self, states: Dict[str, Any]) -> bool:
+        """Check drawer-specific termination conditions"""
+        # No additional termination conditions for drawer
+        return False

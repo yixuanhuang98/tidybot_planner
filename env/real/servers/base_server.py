@@ -10,7 +10,7 @@
 
 import time
 from multiprocessing.managers import BaseManager as MPBaseManager
-from base_controller import Vehicle
+from env.real.base_controller import Vehicle
 from constants import BASE_RPC_HOST, BASE_RPC_PORT, RPC_AUTHKEY
 
 class Base:

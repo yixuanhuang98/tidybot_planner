@@ -5,8 +5,8 @@ import argparse
 import time
 from itertools import count
 from constants import POLICY_CONTROL_PERIOD
-from episode_storage import EpisodeWriter
-from policies import TeleopPolicy, RemotePolicy, MotionPlannerPolicy, GoToCabinetHandlePolicy, GoToCabinetHandlePolicyRight
+from deprecated.episode_storage import EpisodeWriter
+from agent.TeleopPolicy import TeleopPolicy, RemotePolicy, MotionPlannerPolicy, GoToCabinetHandlePolicy, GoToCabinetHandlePolicyRight
 
 def should_save_episode(writer):
     if len(writer) == 0:
@@ -83,14 +83,14 @@ def run_episode(env, policy, writer=None):
 def main(args):
     # Create env
     if args.sim:
-        from mujoco_env import MujocoEnv
+        from env.mujoco import BlocksEnv, CabinetEnv, DrawerEnv
         # Use headless mode but enable rendering if saving images
         render_images = args.save_images
-        env = MujocoEnv(render_images=render_images, show_viewer=False, show_images=False, save_images=args.save_images)
+        env = BlocksEnv(render_images=render_images, show_viewer=False, show_images=False, save_images=args.save_images)
         if args.save_images:
             print("Simulation will run in headless mode with image saving enabled")
     else:
-        from real_env import RealEnv
+        from env.real import RealEnv
         env = RealEnv()
 
     # Create policy

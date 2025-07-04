@@ -683,9 +683,9 @@ class MujocoSim:
                 last_step_time = time.time()
                 mujoco.mj_step(self.model, self.data)
 
-class MujocoEnv:
+class BlocksEnv:
     def __init__(self, render_images=False, show_viewer=False, show_images=False, save_images=False):
-        self.mjcf_path = 'models/stanford_tidybot/scene.xml'
+        self.mjcf_path = 'env/assets/stanford_tidybot/scene.xml'
         self.render_images = render_images
         self.show_viewer = show_viewer
         self.show_images = show_images
@@ -870,7 +870,7 @@ class MujocoEnv:
 
 if __name__ == '__main__':
     # Run in headless mode with image saving by default
-    env = MujocoEnv(render_images=True, show_viewer=False, show_images=False, save_images=True)
+    env = BlocksEnv(render_images=True, show_viewer=False, show_images=False, save_images=True)
     try:
         while True:
             env.reset()

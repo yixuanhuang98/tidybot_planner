@@ -15,7 +15,7 @@ MAX_ANGLE_CHANGE = np.deg2rad(45)
 class IKSolver:
     def __init__(self, ee_offset=0.0):
         # Load arm without gripper
-        self.model = mujoco.MjModel.from_xml_path('models/kinova_gen3/gen3.xml')
+        self.model = mujoco.MjModel.from_xml_path('env/assets/kinova_gen3/gen3.xml')
         self.data = mujoco.MjData(self.model)
         self.model.body_gravcomp[:] = 1.0
 
