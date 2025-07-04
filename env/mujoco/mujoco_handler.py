@@ -1,6 +1,8 @@
 import math
 import time
 import threading
+import os
+from datetime import datetime
 from typing import Dict, Optional, Any
 import numpy as np
 import mujoco
@@ -8,8 +10,9 @@ import mujoco.viewer
 from ruckig import InputParameter, OutputParameter, Result, Ruckig
 
 from constants import POLICY_CONTROL_PERIOD
-from ik_solver import IKSolver
+from agent.ik_solver import IKSolver
 from env.state import EnvironmentState, RobotState, ObjectState, Observation, Action
+from env.mujoco.renderer import MultiViewRenderer
 
 
 class BaseController:
@@ -22,7 +25,7 @@ class BaseController:
 
         # OTG (online trajectory generation)
         num_dofs = 3
-        self.last_command_time = None
+        self.last_command_time = time.time()
         self.otg = Ruckig(num_dofs, timestep)
         self.otg_inp = InputParameter(num_dofs)
         self.otg_out = OutputParameter(num_dofs)
@@ -76,7 +79,7 @@ class ArmController:
 
         # OTG (online trajectory generation)
         num_dofs = 7
-        self.last_command_time = None
+        self.last_command_time = time.time()
         self.otg = Ruckig(num_dofs, timestep)
         self.otg_inp = InputParameter(num_dofs)
         self.otg_out = OutputParameter(num_dofs)
@@ -167,6 +170,30 @@ class MujocoHandler:
         
         # Door site IDs
         self.door_site_ids = {}
+        
+        # Image saving setup
+        self.image_step_counter = 0
+        self.image_save_dir = None
+        self.multi_view_renderer = None
+        if self.render_images:
+            self._setup_image_saving()
+
+    def _setup_image_saving(self):
+        """Setup directory for saving images"""
+        timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+        self.image_save_dir = f"simulation_images/{timestamp}"
+        os.makedirs(self.image_save_dir, exist_ok=True)
+        print(f"Images will be saved to: {self.image_save_dir}")
+    
+    def _setup_renderer(self):
+        """Setup the multi-view renderer"""
+        if self.render_images and self.model and self.data:
+            try:
+                self.multi_view_renderer = MultiViewRenderer(self.model, self.data)
+                print("Multi-view renderer initialized successfully")
+            except Exception as e:
+                print(f"Failed to initialize multi-view renderer: {e}")
+                self.multi_view_renderer = None
 
     def launch(self):
         """Launch the MuJoCo simulation"""
@@ -197,6 +224,10 @@ class MujocoHandler:
         if self.show_viewer:
             self.viewer_thread = threading.Thread(target=self._launch_viewer, daemon=True)
             self.viewer_thread.start()
+        
+        # Setup renderer for image saving
+        if self.render_images:
+            self._setup_renderer()
         
         print("MuJoCo simulation launched successfully")
 
@@ -256,15 +287,14 @@ class MujocoHandler:
 
     def _control_callback(self, *_):
         """Control callback called by MuJoCo"""
-        with self.lock:
-            # Update controllers
-            self.base_controller.update(self.current_action.base_pose)
-            self.arm_controller.update(self.current_action.arm_pos, 
-                                     self.current_action.arm_quat, 
-                                     self.current_action.gripper_pos)
-            
-            # Update state
-            self._update_state()
+        # Update controllers
+        self.base_controller.update(self.current_action.base_pose)
+        self.arm_controller.update(self.current_action.arm_pos, 
+                                 self.current_action.arm_quat, 
+                                 self.current_action.gripper_pos)
+        
+        # Update state
+        self._update_state()
 
     def _update_state(self):
         """Update current state from simulation"""
@@ -401,22 +431,100 @@ class MujocoHandler:
         
         # Add images if rendering is enabled
         if self.render_images:
-            # TODO: Implement image rendering
-            pass
+            images = self._render_and_save_images()
+            extra['images'] = images
         
         return extra
 
     def render(self):
         """Render the environment"""
         if self.render_images:
-            # TODO: Implement image rendering
-            return {}
+            return self._render_and_save_images()
         return None
+    
+    def _render_and_save_images(self):
+        """Render images from multiple camera views and save them"""
+        if not self.multi_view_renderer:
+            return {}
+        
+        try:
+            # Render all views
+            images = self.multi_view_renderer.render_all_views()
+            
+            # Save images to disk
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # milliseconds
+            
+            for view_name, image in images.items():
+                if image is not None:
+                    filename = f"{view_name}_{timestamp}_{self.image_step_counter:06d}.jpg"
+                    filepath = os.path.join(self.image_save_dir, filename)
+                    self._save_image(image, filepath)
+            
+            self.image_step_counter += 1
+            return images
+            
+        except Exception as e:
+            print(f"Error rendering and saving images: {e}")
+            return {}
+    
+    
+    def _save_image(self, image, filepath):
+        """Save image to disk"""
+        try:
+            # Try to import PIL for better image saving
+            from PIL import Image
+            img = Image.fromarray(image)
+            img.save(filepath, quality=95)
+        except ImportError:
+            # Fallback to matplotlib if PIL not available
+            try:
+                import matplotlib.pyplot as plt
+                plt.imsave(filepath, image)
+            except ImportError:
+                # Fallback to basic numpy save
+                np.save(filepath.replace('.jpg', '.npy'), image)
+                print(f"Saved image as numpy array: {filepath.replace('.jpg', '.npy')}")
+        except Exception as e:
+            print(f"Error saving image {filepath}: {e}")
+
+    def dict_to_array(self, action_dict: Dict[str, Any]) -> np.ndarray:
+        """Convert action dictionary to numpy array"""
+        # Extract components from action dictionary
+        base_pose = action_dict.get('base_pose', np.zeros(3))
+        arm_pos = action_dict.get('arm_pos', np.zeros(3))
+        arm_quat = action_dict.get('arm_quat', np.array([1.0, 0.0, 0.0, 0.0]))
+        gripper_pos = action_dict.get('gripper_pos', np.array([0.0]))
+        
+        # Handle different input formats
+        if isinstance(base_pose, list):
+            base_pose = np.array(base_pose)
+        if isinstance(arm_pos, list):
+            arm_pos = np.array(arm_pos)
+        if isinstance(arm_quat, list):
+            arm_quat = np.array(arm_quat)
+        if isinstance(gripper_pos, (int, float)):
+            gripper_pos = np.array([gripper_pos])
+        elif isinstance(gripper_pos, list):
+            gripper_pos = np.array(gripper_pos)
+        
+        # Ensure proper shapes
+        base_pose = base_pose.flatten()[:3]
+        arm_pos = arm_pos.flatten()[:3]
+        arm_quat = arm_quat.flatten()[:4]
+        gripper_pos = gripper_pos.flatten()[:1]
+        
+        # Concatenate into single array
+        return np.concatenate([base_pose, arm_pos, arm_quat, gripper_pos])
 
     def close(self):
         """Close the simulation"""
         if self.viewer_thread and self.viewer_thread.is_alive():
             self.viewer_thread.join(timeout=1.0)
+        
+        # Close multi-view renderer
+        if self.multi_view_renderer:
+            self.multi_view_renderer.close()
+            self.multi_view_renderer = None
         
         if self.model is not None:
             # Clean up MuJoCo resources

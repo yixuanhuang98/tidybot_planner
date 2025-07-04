@@ -18,7 +18,7 @@ import mujoco.viewer
 import numpy as np
 from ruckig import InputParameter, OutputParameter, Result, Ruckig
 from constants import POLICY_CONTROL_PERIOD
-from ik_solver import IKSolver
+from agent.ik_solver import IKSolver
 import os
 import subprocess
 

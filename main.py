@@ -5,28 +5,16 @@ import argparse
 import time
 from itertools import count
 from constants import POLICY_CONTROL_PERIOD
-from deprecated.episode_storage import EpisodeWriter
-from agent.TeleopPolicy import TeleopPolicy, RemotePolicy, MotionPlannerPolicy, GoToCabinetHandlePolicy, GoToCabinetHandlePolicyRight
+from agent.teleop_policy import TeleopPolicy
+from agent.remote_policy import RemotePolicy
+from agent.motion_planner_policy import MotionPlannerPolicy
+from agent.go_to_cabinet_handle_policy import GoToCabinetHandlePolicy
+from agent.go_to_cabinet_handle_policy_right import GoToCabinetHandlePolicyRight
 
-def should_save_episode(writer):
-    if len(writer) == 0:
-        print('Discarding empty episode')
-        return False
-
-    # Prompt user whether to save episode
-    while True:
-        user_input = input('Save episode (y/n)? ').strip().lower()
-        if user_input == 'y':
-            return True
-        if user_input == 'n':
-            print('Discarding episode')
-            return False
-        print('Invalid response')
-
-def run_episode(env, policy, writer=None):
+def run_episode(env, policy):
     # Reset the env
     print('Resetting env...')
-    env.reset()
+    obs, info = env.reset()
     print('Env has been reset')
 
     # Wait for user to press "Start episode"
@@ -39,11 +27,8 @@ def run_episode(env, policy, writer=None):
     for step_idx in count():
         # Enforce desired control freq
         step_end_time = start_time + step_idx * POLICY_CONTROL_PERIOD
-        while time.time() < step_end_time:
-            time.sleep(0.0001)
-
-        # Get latest observation
-        obs = env.get_obs()
+        # while time.time() < step_end_time:
+        #     time.sleep(0.0000001)
 
         # Get action
         action = policy.step(obs)
@@ -55,42 +40,39 @@ def run_episode(env, policy, writer=None):
 
         # Execute valid action on robot
         if isinstance(action, dict):
-            env.step(action)
+            # Convert dict action to numpy array for the new environment API
+            action_array = env.handler.dict_to_array(action)
+            obs, reward, success, terminated, truncated, info = env.step(action_array)
 
-            if writer is not None and not episode_ended:
-                # Record executed action
-                writer.step(obs, action)
+            # Render and save images if enabled
+            if env.handler.render_images:
+                env.render()
+
+            # Check if episode should end
+            if terminated or truncated or success:
+                episode_ended = True
+                print(f'Episode ended - Success: {success}, Terminated: {terminated}, Truncated: {truncated}')
 
         # Episode ended
         elif not episode_ended and action == 'end_episode':
             episode_ended = True
             print('Episode ended')
 
-            if writer is not None and should_save_episode(writer):
-                # Save to disk in background thread
-                writer.flush_async()
-
-            print('Teleop is now active. Press "Reset env" in the web app when ready to proceed.')
-
         # Ready for env reset
         elif action == 'reset_env':
             break
 
-    if writer is not None:
-        # Wait for writer to finish saving to disk
-        writer.wait_for_flush()
-
 def main(args):
     # Create env
     if args.sim:
-        from env.mujoco import BlocksEnv, CabinetEnv, DrawerEnv
+        from env.mujoco.mujoco_env import BlocksEnv, CabinetEnv, DrawerEnv
         # Use headless mode but enable rendering if saving images
         render_images = args.save_images
-        env = BlocksEnv(render_images=render_images, show_viewer=False, show_images=False, save_images=args.save_images)
+        env = BlocksEnv(render_images=render_images, show_viewer=False, max_episode_steps=1000)
         if args.save_images:
             print("Simulation will run in headless mode with image saving enabled")
     else:
-        from env.real import RealEnv
+        from env.real.real_env import RealEnv
         env = RealEnv()
 
     # Create policy
@@ -105,12 +87,8 @@ def main(args):
     else:
         policy = RemotePolicy()
 
-    try:
-        while True:
-            writer = EpisodeWriter(args.output_dir) if args.save else None
-            run_episode(env, policy, writer)
-    finally:
-        env.close()
+    run_episode(env, policy)
+    env.close()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -119,7 +97,5 @@ if __name__ == '__main__':
     parser.add_argument('--motion_planner', action='store_true')
     parser.add_argument('--goto-cabinet-handle', action='store_true', help='Move gripper to left cabinet handle pose')
     parser.add_argument('--goto-cabinet-handle-right', action='store_true', help='Move gripper to right cabinet handle pose')
-    parser.add_argument('--save', action='store_true')
     parser.add_argument('--save-images', action='store_true', help='Save rendered simulation images to disk (headless)')
-    parser.add_argument('--output-dir', default='data/demos')
     main(parser.parse_args())

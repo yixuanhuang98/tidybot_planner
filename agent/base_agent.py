@@ -4,7 +4,7 @@ import numpy as np
 import math
 from scipy.spatial.transform import Rotation as R
 
-from ik_solver import IKSolver
+from .ik_solver import IKSolver
 
 
 class BaseAgent(ABC):
