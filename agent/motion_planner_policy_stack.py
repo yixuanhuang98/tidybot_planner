@@ -85,32 +85,28 @@ class MotionPlannerPolicyStack(BaseAgent):
         if self.state == 'idle':
             # Detect objects and plan new command
             detected_objects = self.detect_objects_from_ground_truth(obs)
-            if detected_objects:
+            if detected_objects and len(detected_objects) > 1:
                 # Sort objects by x position
-                detected_objects.sort(key=lambda x: x[0])
-                smallest_x_cube = detected_objects[0]
-                largest_x_cube = detected_objects[-1]
-
-                # Create pick command for the cube with the smallest x value
+                detected_objects.sort(key=lambda x: x[0][0])
+                smallest_x_cube, smallest_id = detected_objects[0]
+                largest_x_cube, largest_id = detected_objects[-1]
+                if smallest_id == largest_id:
+                    print("Only one unique cube detected, cannot perform pick and place.")
+                    return self.search_for_objects(obs)
                 self.object_location = smallest_x_cube
-                # Set placement location on top of the cube with the largest x value
                 self.target_location = np.array([
-                    largest_x_cube[0],  # Same X as largest cube
-                    largest_x_cube[1],  # Same Y as largest cube
-                    largest_x_cube[2] + 0.05  # Slightly above the largest cube
+                    largest_x_cube[0],
+                    largest_x_cube[1],
+                    largest_x_cube[2] + 0.05
                 ])
-                
                 pick_command = {
                     'primitive_name': 'pick',
                     'waypoints': [base_pose[:2].tolist(), self.object_location[:2].tolist()],
-                    'object_3d_pos': self.object_location.copy()  # Store full 3D position
+                    'object_3d_pos': self.object_location.copy()
                 }
-                
                 print(f"Smallest x cube detected at: {self.object_location}")
                 print(f"Target placement location: {self.target_location}")
                 print(f"Creating pick command with waypoints: {pick_command['waypoints']}")
-                
-                # Build base command and start moving
                 base_command = self.build_base_command(pick_command)
                 if base_command:
                     self.current_command = pick_command
@@ -125,7 +121,7 @@ class MotionPlannerPolicyStack(BaseAgent):
                 else:
                     print("Failed to build base command")
             else:
-                # No objects found, search around
+                # No objects found or not enough cubes, search around
                 return self.search_for_objects(obs)
                 
         elif self.state == 'moving':
@@ -254,7 +250,7 @@ class MotionPlannerPolicyStack(BaseAgent):
                         print(f"Started grasp attempt, initial gripper pos: {self.initial_gripper_pos:.3f}")
                     
                     # Check for successful grasp (multiple criteria)
-                    gripper_closed_enough = gripper_pos[0] > 0.55  # Lower threshold (was 0.8)
+                    gripper_closed_enough = gripper_pos[0] > 0.75  # Lower threshold (was 0.8)
                     gripper_progress = (gripper_pos[0] - self.initial_gripper_pos) > 0.3  # Made significant progress
                     grasp_timeout = (time.time() - self.grasp_start_time) > 3.0  # 3 second timeout
                     
@@ -505,36 +501,20 @@ class MotionPlannerPolicyStack(BaseAgent):
         return None
 
     def detect_objects_from_ground_truth(self, obs):
-        """Detect objects using ground truth from MuJoCo simulation and find the one with smallest x value"""
+        """Detect all cubes using ground truth from MuJoCo simulation and return their positions and IDs"""
         detected_objects = []
-        
-        # Debug: Print all available observation keys
         print(f"Available observation keys: {list(obs.keys())}")
-        
-        # Get all three cube positions from MuJoCo environment
-        cubes = []
         for i in range(1, 4):
             cube_key = f'cube{i}_pos'
             if cube_key in obs:
                 cube_pos = obs[cube_key].copy()
-                # Check if cube position is not just zeros (indicating not properly initialized)
                 if not np.allclose(cube_pos, np.zeros(3)):
-                    cubes.append((cube_pos, i))
+                    detected_objects.append((cube_pos, i))
                     print(f"Detected cube {i} at position: {cube_pos}")
                 else:
                     print(f"Cube {i} position is zeros (not initialized): {cube_pos}")
             else:
                 print(f"Warning: {cube_key} not found in observation")
-        
-        if cubes:
-            # Sort cubes by x position and select the one with smallest x value
-            cubes.sort(key=lambda x: x[0][0])  # Sort by x coordinate (first element of position)
-            target_cube_pos, target_cube_id = cubes[0]
-            detected_objects.append(target_cube_pos)
-            print(f"Selected cube {target_cube_id} with smallest x value: {target_cube_pos[0]:.3f}")
-        else:
-            print("No valid cubes found (either missing keys or all zeros)")
-        
         return detected_objects
 
     def search_for_objects(self, obs):
