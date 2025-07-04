@@ -10,6 +10,7 @@ from agent.remote_policy import RemotePolicy
 from agent.motion_planner_policy import MotionPlannerPolicy
 from agent.go_to_cabinet_handle_policy import GoToCabinetHandlePolicy
 from agent.go_to_cabinet_handle_policy_right import GoToCabinetHandlePolicyRight
+from agent.motion_planner_policy_stack import MotionPlannerPolicyStack
 
 def run_episode(env, policy):
     # Reset the env
@@ -68,7 +69,7 @@ def main(args):
         from env.mujoco.mujoco_env import BlocksEnv, CabinetEnv, DrawerEnv
         # Use headless mode but enable rendering if saving images
         render_images = args.save_images
-        env = BlocksEnv(render_images=render_images, show_viewer=False, max_episode_steps=1000, render_every_n_frames=100)
+        env = BlocksEnv(render_images=render_images, show_viewer=False, max_episode_steps=10000, render_every_n_frames=100)
         if args.save_images:
             print("Simulation will run in headless mode with image saving enabled")
     else:
@@ -82,6 +83,8 @@ def main(args):
         policy = GoToCabinetHandlePolicyRight()
     elif args.motion_planner:
         policy = MotionPlannerPolicy()
+    elif args.motion_planner_stack:
+        policy = MotionPlannerPolicyStack()
     elif args.teleop:
         policy = TeleopPolicy()
     else:
@@ -95,6 +98,7 @@ if __name__ == '__main__':
     parser.add_argument('--sim', action='store_true')
     parser.add_argument('--teleop', action='store_true')
     parser.add_argument('--motion_planner', action='store_true')
+    parser.add_argument('--motion_planner_stack', action='store_true', help='Stack cubes by picking the smallest x value cube and placing it on the largest x value cube')
     parser.add_argument('--goto-cabinet-handle', action='store_true', help='Move gripper to left cabinet handle pose')
     parser.add_argument('--goto-cabinet-handle-right', action='store_true', help='Move gripper to right cabinet handle pose')
     parser.add_argument('--save-images', action='store_true', help='Save rendered simulation images to disk (headless)')

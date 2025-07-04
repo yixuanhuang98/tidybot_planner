@@ -235,7 +235,7 @@ class BlocksEnv(AbstractMujocoEnv):
     def __init__(self, show_viewer: bool = False, render_images: bool = False,
                  max_episode_steps: int = 1000, render_every_n_frames: int = 1):
         super().__init__(
-            mjcf_path="env/assets/stanford_tidybot/scene.xml",
+            mjcf_path="env/assets/stanford_tidybot/blocks_scene.xml",
             show_viewer=show_viewer,
             render_images=render_images,
             max_episode_steps=max_episode_steps,
