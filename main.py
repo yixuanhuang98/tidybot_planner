@@ -42,7 +42,7 @@ def run_episode(env, policy):
                 print('Policy reported episode ended')
                 break
             # Otherwise just wait for next cycle (e.g., teleop not enabled)
-            continue
+            # break
 
         # Execute valid action on robot
         if isinstance(action, dict):
@@ -55,8 +55,8 @@ def run_episode(env, policy):
                 env.render()
 
             # Check if episode should end
-            # if terminated or truncated or success:
-            if truncated or success:
+            if terminated or truncated or success:
+            # if truncated or success:
                 print(f'Episode ended - Success: {success}, Terminated: {terminated}, Truncated: {truncated}')
                 break
 

@@ -183,10 +183,7 @@ class AbstractMujocoEnv(BaseEnv, ABC):
 
     def get_termination(self, states: Dict[str, Any]) -> bool:
         """Check if episode should terminate"""
-        # Base termination conditions
-        if self._get_base_termination(states):
-            return True
-        
+
         # Scene-specific termination
         return self._get_scene_specific_termination(states)
 
@@ -323,7 +320,7 @@ class BlocksEnv(AbstractMujocoEnv):
         """Check if blocks have fallen off table"""
         for obj_name in ['cube1', 'cube2', 'cube3']:
             pos = states.get(f'{obj_name}_pos', np.zeros(3))
-            if pos[2] < -0.1:  # Below table
+            if pos[2] > 0.1: 
                 return True
         
         return False
