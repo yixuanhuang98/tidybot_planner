@@ -14,6 +14,7 @@ from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
 from scipy.spatial.transform import Rotation as R
 from constants import POLICY_SERVER_HOST, POLICY_SERVER_PORT, POLICY_IMAGE_WIDTH, POLICY_IMAGE_HEIGHT
+from enum import Enum, auto
 
 class Policy:
     def reset(self):
@@ -338,8 +339,39 @@ class RemotePolicy(TeleopPolicy):
             # Enable policy execution if user is pressing on screen
             self.enabled = 'teleop_mode' in data
 
+class PickState(Enum):
+    APPROACH = auto()
+    LOWER = auto()
+    GRASP = auto()
+    LIFT = auto()
+
+class PlaceState(Enum):
+    APPROACH = auto()
+    RELEASE = auto()
+
 # Motion Planner generated plan. 
 class MotionPlannerPolicy(Policy):
+    # Base following parameters (from BaseController)
+    LOOKAHEAD_DISTANCE = 0.3  # 30 cm
+    POSITION_TOLERANCE = 0.005  # 0.5 cm (reduced from 1.5 cm)
+    HEADING_TOLERANCE = math.radians(2.1)  # 2.1 degrees
+
+    # Object and target locations
+    PLACEMENT_X_OFFSET = 0.5  # 50cm in X direction
+
+    # Manipulation parameters
+    ROBOT_BASE_HEIGHT = 0.48
+    PICK_APPROACH_HEIGHT_OFFSET = 0.25
+    PICK_LOWER_DIST = 0.08
+    PICK_LIFT_DIST = 0.28  # Net lift is (PICK_LIFT_DIST - PICK_LOWER_DIST)
+    PLACE_APPROACH_HEIGHT_OFFSET = 0.10
+
+    # Grasping parameters
+    GRASP_SUCCESS_THRESHOLD = 0.55
+    GRASP_PROGRESS_THRESHOLD = 0.3
+    GRASP_TIMEOUT_S = 3.0
+    PLACE_SUCCESS_THRESHOLD = 0.2
+
     def __init__(self):
         # Motion planning state - following controller.py pattern
         self.state = 'idle'  # States: idle, moving, manipulating, grasping
@@ -347,13 +379,10 @@ class MotionPlannerPolicy(Policy):
         self.base_waypoints = []
         self.current_waypoint_idx = 0
         self.target_ee_pos = None
-        self.grasp_step = 0  # 0: position arm with open gripper, 1: close gripper
+        self.grasp_state = None  # Replaces grasp_step
         
-        # Base following parameters (from BaseController)
-        self.LOOKAHEAD_DISTANCE = 0.3  # 30 cm
+        # Base following parameters
         self.lookahead_position = None
-        self.position_tolerance = 0.005  # 0.5 cm (reduced from 1.5 cm)
-        self.heading_tolerance = math.radians(2.1)  # 2.1 degrees
         
         # Object and target locations (using ground truth from MuJoCo)
         self.object_location = None
@@ -374,7 +403,7 @@ class MotionPlannerPolicy(Policy):
         self.target_ee_pos = None
         self.lookahead_position = None
         self.episode_ended = False
-        self.grasp_step = 0  # Reset grasping step
+        self.grasp_state = None
         
         # Clean up any grasp tracking variables
         if hasattr(self, 'grasp_start_time'):
@@ -417,7 +446,7 @@ class MotionPlannerPolicy(Policy):
                 self.object_location = detected_objects[0]
                 # Set placement location relative to detected object (e.g., 50cm away)
                 self.target_location = np.array([
-                    self.object_location[0] + 0.5,  # 50cm in X direction
+                    self.object_location[0] + self.PLACEMENT_X_OFFSET,  # 50cm in X direction
                     self.object_location[1],        # Same Y as object
                     self.object_location[2]         # Same Z as object (table height)
                 ])
@@ -447,8 +476,8 @@ class MotionPlannerPolicy(Policy):
                 else:
                     print("Failed to build base command")
             else:
-                # No objects found, search around
-                return self.search_for_objects(obs)
+                # No objects found, do nothing
+                return None
                 
         elif self.state == 'moving':
             # Execute base movement following waypoints (like BaseController)
@@ -479,94 +508,72 @@ class MotionPlannerPolicy(Policy):
         elif self.state == 'manipulating':
             # Execute arm manipulation
             if self.current_command['primitive_name'] == 'pick':
+                if self.grasp_state is None:
+                    self.grasp_state = PickState.APPROACH
+
+                # Define default targets to hold current pose
+                target_arm_pos = arm_pos.copy()
+                target_arm_quat = arm_quat.copy()
+                target_gripper_pos = gripper_pos.copy()
+
                 # Position arm above object and close gripper to grasp
-                # Use actual detected object 3D position
-                if 'object_3d_pos' in self.current_command:
-                    object_3d_pos = self.current_command['object_3d_pos']
-                    # Calculate global position difference with better approach height
-                    global_diff = np.array([
-                        object_3d_pos[0] - base_pose[0],
-                        object_3d_pos[1] - base_pose[1], 
-                        object_3d_pos[2] + 0.25 - 0.48  # Object height + higher offset - base height (was 0.15, now 0.25)
-                    ])
-                    
-                    # Transform to base's local coordinate frame (account for base rotation)
-                    base_angle = base_pose[2]
-                    cos_angle = math.cos(-base_angle)  # Negative for inverse rotation
-                    sin_angle = math.sin(-base_angle)
-                    
-                    object_relative_pos = np.array([
-                        cos_angle * global_diff[0] - sin_angle * global_diff[1],
-                        sin_angle * global_diff[0] + cos_angle * global_diff[1],
-                        global_diff[2]  # Z component unchanged
-                    ])
-                    print(f"Primary path: global_diff = {global_diff}")
-                else:
-                    # Fallback to target_ee_pos if object_3d_pos not available
-                    global_diff = np.array([
-                        self.target_ee_pos[0] - base_pose[0],
-                        self.target_ee_pos[1] - base_pose[1], 
-                        -0.33  # Slightly higher position for better top grasp approach
-                    ])
-                    
-                    # Transform to base's local coordinate frame
-                    base_angle = base_pose[2]
-                    cos_angle = math.cos(-base_angle)
-                    sin_angle = math.sin(-base_angle)
-                    
-                    object_relative_pos = np.array([
-                        cos_angle * global_diff[0] - sin_angle * global_diff[1],
-                        sin_angle * global_diff[0] + cos_angle * global_diff[1],
-                        global_diff[2]
-                    ])
-                    print(f"Fallback path: global_diff = {global_diff}")
+                object_3d_pos = self.current_command['object_3d_pos']
+                # Calculate global position difference with better approach height
+                global_diff = np.array([
+                    object_3d_pos[0] - base_pose[0],
+                    object_3d_pos[1] - base_pose[1], 
+                    object_3d_pos[2] + self.PICK_APPROACH_HEIGHT_OFFSET - self.ROBOT_BASE_HEIGHT  # Object height + higher offset - base height (was 0.15, now 0.25)
+                ])
+                
+                # Transform to base's local coordinate frame (account for base rotation)
+                base_angle = base_pose[2]
+                cos_angle = math.cos(-base_angle)  # Negative for inverse rotation
+                sin_angle = math.sin(-base_angle)
+                
+                object_relative_pos = np.array([
+                    cos_angle * global_diff[0] - sin_angle * global_diff[1],
+                    sin_angle * global_diff[0] + cos_angle * global_diff[1],
+                    global_diff[2]  # Z component unchanged
+                ])
+                print(f"Primary path: global_diff = {global_diff}")
                 
                 print(f"Base angle: {base_pose[2]:.3f} rad ({math.degrees(base_pose[2]):.1f} deg)")
                 print(f"Object global pos: {self.current_command.get('object_3d_pos', 'N/A')}")
-                print(f"Transformed object_relative_pos = {object_relative_pos}")
+                
                 print(f"Current arm pos: {arm_pos}")
                 print(f"Position error: {np.linalg.norm(arm_pos - object_relative_pos):.4f}m")
-                print(f"Grasp step: {self.grasp_step}")
+                print(f"Grasp state: {self.grasp_state}")
                 
-                if self.grasp_step == 0:
+                if self.grasp_state == PickState.APPROACH:
                     # Step 1: Position arm well above object with open gripper (safe approach)
-                    action = {
-                        'base_pose': base_pose.copy(),
-                        'arm_pos': object_relative_pos,  # Position arm above object
-                        'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
-                        'gripper_pos': np.array([0.0])  # Keep gripper open while positioning
-                    }
+                    target_arm_pos = object_relative_pos
+                    target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
+                    target_gripper_pos = np.array([0.0])  # Gripper open
+
                     print(f"Step 1: Positioning arm above object with open gripper")
-                    # Move to next step after arm is positioned
-                    if np.allclose(arm_pos, object_relative_pos, atol=0.03):  # Tighter tolerance: 3cm
-                        self.grasp_step = 1
+                    if np.allclose(arm_pos, target_arm_pos, atol=0.03):  # Tighter tolerance: 3cm
+                        self.grasp_state = PickState.LOWER
                         print("Arm positioned above object, moving to lower approach")
                 
-                elif self.grasp_step == 1:
+                elif self.grasp_state == PickState.LOWER:
                     # Step 2: Lower gripper closer to object for precise grasping
-                    lower_pos = object_relative_pos.copy()
-                    lower_pos[2] -= 0.08  # Lower by 8cm for closer approach (more conservative)
-                    action = {
-                        'base_pose': base_pose.copy(),
-                        'arm_pos': lower_pos,  # Lower the arm closer to object
-                        'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
-                        'gripper_pos': np.array([0.0])  # Keep gripper open while lowering
-                    }
-                    print(f"Step 2: Lowering gripper for precise approach... target: {lower_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
-                    if np.allclose(arm_pos, lower_pos, atol=0.02):  # Very tight tolerance: 2cm
-                        self.grasp_step = 2
+                    target_arm_pos = object_relative_pos.copy()
+                    target_arm_pos[2] -= self.PICK_LOWER_DIST  # Lower by 8cm for closer approach
+                    target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
+                    target_gripper_pos = np.array([0.0])  # Gripper open
+
+                    print(f"Step 2: Lowering gripper for precise approach... target: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
+                    if np.allclose(arm_pos, target_arm_pos, atol=0.02):  # Very tight tolerance: 2cm
+                        self.grasp_state = PickState.GRASP
                         print("Gripper lowered to grasping position, closing gripper")
                 
-                elif self.grasp_step == 2:
+                elif self.grasp_state == PickState.GRASP:
                     # Step 3: Close gripper to grasp
-                    lower_pos = object_relative_pos.copy()
-                    lower_pos[2] -= 0.08  # Maintain lowered position
-                    action = {
-                        'base_pose': base_pose.copy(),
-                        'arm_pos': lower_pos,  # Maintain lowered position
-                        'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
-                        'gripper_pos': np.array([1.0])  # Close gripper
-                    }
+                    target_arm_pos = object_relative_pos.copy()
+                    target_arm_pos[2] -= self.PICK_LOWER_DIST  # Maintain lowered position
+                    target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
+                    target_gripper_pos = np.array([1.0])  # Close gripper
+
                     print(f"Step 3: Closing gripper... current position: {gripper_pos[0]:.3f}")
                     
                     # Initialize grasp attempt tracking
@@ -576,9 +583,9 @@ class MotionPlannerPolicy(Policy):
                         print(f"Started grasp attempt, initial gripper pos: {self.initial_gripper_pos:.3f}")
                     
                     # Check for successful grasp (multiple criteria)
-                    gripper_closed_enough = gripper_pos[0] > 0.55  # Lower threshold (was 0.8)
-                    gripper_progress = (gripper_pos[0] - self.initial_gripper_pos) > 0.3  # Made significant progress
-                    grasp_timeout = (time.time() - self.grasp_start_time) > 3.0  # 3 second timeout
+                    gripper_closed_enough = gripper_pos[0] > self.GRASP_SUCCESS_THRESHOLD
+                    gripper_progress = (gripper_pos[0] - self.initial_gripper_pos) > self.GRASP_PROGRESS_THRESHOLD
+                    grasp_timeout = (time.time() - self.grasp_start_time) > self.GRASP_TIMEOUT_S
                     
                     if gripper_closed_enough or gripper_progress or grasp_timeout:
                         if gripper_closed_enough or gripper_progress:
@@ -586,35 +593,30 @@ class MotionPlannerPolicy(Policy):
                         else:
                             print(f"Grasp timeout reached, proceeding with current grip: {gripper_pos[0]:.3f}")
                         
-                        self.grasp_step = 3
+                        self.grasp_state = PickState.LIFT
                         # Clean up tracking variables
                         delattr(self, 'grasp_start_time')
                         delattr(self, 'initial_gripper_pos')
                         print("Moving to lift phase!")
                 
-                elif self.grasp_step == 3:
-                    # Step 4: Lift object by 20cm from the grasping position
-                    lower_pos = object_relative_pos.copy()
-                    lower_pos[2] -= 0.08  # Start from lowered grasping position
-                    lifted_pos = lower_pos.copy()
-                    lifted_pos[2] += 0.28  # Lift by 28cm from grasping position (net +20cm from original)
-                    action = {
-                        'base_pose': base_pose.copy(),
-                        'arm_pos': lifted_pos,  # Lift the object
-                        'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
-                        'gripper_pos': np.array([1.0])  # Keep gripper closed
-                    }
-                    print(f"Step 4: Lifting object... target height: {lifted_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
-                    if np.allclose(arm_pos, lifted_pos, atol=0.05):  # 5cm tolerance
+                elif self.grasp_state == PickState.LIFT:
+                    # Step 4: Lift object from the grasping position
+                    lifted_pos = object_relative_pos.copy()
+                    lifted_pos[2] += (self.PICK_LIFT_DIST - self.PICK_LOWER_DIST) # Net lift
+                    target_arm_pos = lifted_pos
+                    target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
+                    target_gripper_pos = np.array([1.0])  # Gripper closed
+
+                    print(f"Step 4: Lifting object... target height: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
+                    if np.allclose(arm_pos, target_arm_pos, atol=0.05):  # 5cm tolerance
                         print("Object lifted successfully! Now moving to placement location.")
-                        # Create place command to move to placement location (already set dynamically)
+                        # Create place command
                         place_command = {
                             'primitive_name': 'place',
                             'waypoints': [base_pose[:2].tolist(), self.target_location[:2].tolist()],
-                            'target_3d_pos': self.target_location.copy()  # Store full 3D target position
+                            'target_3d_pos': self.target_location.copy()
                         }
                         
-                        # Build base command for placement
                         base_command = self.build_base_command(place_command)
                         if base_command:
                             self.current_command = place_command
@@ -623,87 +625,85 @@ class MotionPlannerPolicy(Policy):
                             self.current_waypoint_idx = 1
                             self.lookahead_position = None
                             self.state = 'moving'
-                            self.grasp_step = 0  # Reset for next manipulation
+                            self.grasp_state = None  # Reset for next manipulation
                             print(f"Starting base movement to placement location at {self.target_location}")
                         else:
                             print("Failed to build place command")
                             self.episode_ended = True
                             self.state = 'idle'
-                
+
+                # Create action from targets
+                action = {
+                    'base_pose': base_pose.copy(),
+                    'arm_pos': target_arm_pos,
+                    'arm_quat': target_arm_quat,
+                    'gripper_pos': target_gripper_pos,
+                }
                 return action
+
             elif self.current_command['primitive_name'] == 'place':
+                if self.grasp_state is None:
+                    self.grasp_state = PlaceState.APPROACH
+
+                # Define default targets to hold current pose
+                target_arm_pos = arm_pos.copy()
+                target_arm_quat = arm_quat.copy()
+                target_gripper_pos = gripper_pos.copy()
+
                 # Position arm above placement location and open gripper
-                # Use actual target 3D position
-                if 'target_3d_pos' in self.current_command:
-                    target_3d_pos = self.current_command['target_3d_pos']
-                    # Calculate global position difference
-                    global_diff = np.array([
-                        target_3d_pos[0] - base_pose[0],
-                        target_3d_pos[1] - base_pose[1], 
-                        target_3d_pos[2] + 0.10 - 0.48  # Target height + offset - base height
-                    ])
-                    
-                    # Transform to base's local coordinate frame (account for base rotation)
-                    base_angle = base_pose[2]
-                    cos_angle = math.cos(-base_angle)  # Negative for inverse rotation
-                    sin_angle = math.sin(-base_angle)
-                    
-                    target_relative_pos = np.array([
-                        cos_angle * global_diff[0] - sin_angle * global_diff[1],
-                        sin_angle * global_diff[0] + cos_angle * global_diff[1],
-                        global_diff[2]  # Z component unchanged
-                    ])
-                else:
-                    # Fallback to target_ee_pos if target_3d_pos not available
-                    global_diff = np.array([
-                        self.target_ee_pos[0] - base_pose[0],
-                        self.target_ee_pos[1] - base_pose[1], 
-                        -0.30  # Position slightly above target for placement
-                    ])
-                    
-                    # Transform to base's local coordinate frame
-                    base_angle = base_pose[2]
-                    cos_angle = math.cos(-base_angle)
-                    sin_angle = math.sin(-base_angle)
-                    
-                    target_relative_pos = np.array([
-                        cos_angle * global_diff[0] - sin_angle * global_diff[1],
-                        sin_angle * global_diff[0] + cos_angle * global_diff[1],
-                        global_diff[2]
-                    ])
+                target_3d_pos = self.current_command['target_3d_pos']
+                # Calculate global position difference
+                global_diff = np.array([
+                    target_3d_pos[0] - base_pose[0],
+                    target_3d_pos[1] - base_pose[1], 
+                    target_3d_pos[2] + self.PLACE_APPROACH_HEIGHT_OFFSET - self.ROBOT_BASE_HEIGHT  # Target height + offset - base height
+                ])
+                
+                # Transform to base's local coordinate frame (account for base rotation)
+                base_angle = base_pose[2]
+                cos_angle = math.cos(-base_angle)  # Negative for inverse rotation
+                sin_angle = math.sin(-base_angle)
+                
+                target_relative_pos = np.array([
+                    cos_angle * global_diff[0] - sin_angle * global_diff[1],
+                    sin_angle * global_diff[0] + cos_angle * global_diff[1],
+                    global_diff[2]  # Z component unchanged
+                ])
                 
                 print(f"Placing: target_relative_pos = {target_relative_pos}")
                 print(f"Target EE pos: {self.target_ee_pos}, Base pose: {base_pose}")
-                print(f"Grasp step: {self.grasp_step}")
+                print(f"Grasp state: {self.grasp_state}")
                 
-                if self.grasp_step == 0:
+                if self.grasp_state == PlaceState.APPROACH:
                     # Step 1: Position arm above placement location with closed gripper
-                    action = {
-                        'base_pose': base_pose.copy(),
-                        'arm_pos': target_relative_pos,  # Position arm above placement location
-                        'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
-                        'gripper_pos': np.array([1.0])  # Keep gripper closed while positioning
-                    }
+                    target_arm_pos = target_relative_pos
+                    target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
+                    target_gripper_pos = np.array([1.0])  # Gripper closed
+
                     print(f"Step 1: Positioning arm above placement location with closed gripper")
-                    # Move to next step after arm is positioned
-                    if np.allclose(arm_pos, target_relative_pos, atol=0.05):  # 5cm tolerance
-                        self.grasp_step = 1
+                    if np.allclose(arm_pos, target_arm_pos, atol=0.05):  # 5cm tolerance
+                        self.grasp_state = PlaceState.RELEASE
                         print("Arm positioned above placement location, opening gripper")
                 
-                elif self.grasp_step == 1:
+                elif self.grasp_state == PlaceState.RELEASE:
                     # Step 2: Open gripper to place object
-                    action = {
-                        'base_pose': base_pose.copy(),
-                        'arm_pos': target_relative_pos,  # Maintain arm position
-                        'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
-                        'gripper_pos': np.array([0.0])  # Open gripper
-                    }
+                    target_arm_pos = target_relative_pos  # Maintain arm position
+                    target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
+                    target_gripper_pos = np.array([0.0])  # Gripper open
+
                     print(f"Step 2: Opening gripper... current position: {gripper_pos[0]:.3f}")
-                    if gripper_pos[0] < 0.2:  # Gripper opened successfully
+                    if gripper_pos[0] < self.PLACE_SUCCESS_THRESHOLD:
                         print("Object placed successfully! Task complete.")
                         self.episode_ended = True  # End the episode
                         self.state = 'idle'
                 
+                # Create action from targets
+                action = {
+                    'base_pose': base_pose.copy(),
+                    'arm_pos': target_arm_pos,
+                    'arm_quat': target_arm_quat,
+                    'gripper_pos': target_gripper_pos,
+                }
                 return action
 
         # Default: hold current pose
@@ -761,8 +761,8 @@ class MotionPlannerPolicy(Policy):
             print(f"Using final waypoint as target: {target_position}")
             # Check if we've reached the final position
             position_error = self.distance(base_pose[:2], target_position)
-            print(f"Position error to final target: {position_error:.3f} (tolerance: {self.position_tolerance})")
-            if position_error < self.position_tolerance:
+            print(f"Position error to final target: {position_error:.3f} (tolerance: {self.POSITION_TOLERANCE})")
+            if position_error < self.POSITION_TOLERANCE:
                 print("Reached final position within tolerance")
                 return None  # Movement complete
         else:
@@ -849,21 +849,6 @@ class MotionPlannerPolicy(Policy):
             print(f"Selected cube {target_cube_id} with smallest x value: {target_cube_pos[0]:.3f}")
         
         return detected_objects
-
-
-
-    def search_for_objects(self, obs):
-        """Search behavior when no objects are detected"""
-        base_pose = obs['base_pose']
-        
-        # Simple search pattern: rotate in place to look around
-        search_action = {
-            'base_pose': np.array([base_pose[0], base_pose[1], base_pose[2] + 0.1]),
-            'arm_pos': np.array([0.45, 0.0, 0.25]),  # Elevated position for searching
-            'arm_quat': np.array([0.0, 0.707, 0.0, 0.707]),
-            'gripper_pos': obs['gripper_pos'].copy(),
-        }
-        return search_action
 
     def distance(self, pt1, pt2):
         """Calculate distance between two points from controller.py"""
