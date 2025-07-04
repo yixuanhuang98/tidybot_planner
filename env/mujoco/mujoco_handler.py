@@ -134,10 +134,12 @@ class MujocoHandler:
     """MuJoCo simulation handler"""
     
     def __init__(self, mjcf_path: str = "env/assets/stanford_tidybot/scene.xml", 
-                 show_viewer: bool = False, render_images: bool = False):
+                 show_viewer: bool = False, render_images: bool = False,
+                 render_every_n_frames: int = 1):
         self.mjcf_path = mjcf_path
         self.show_viewer = show_viewer
         self.render_images = render_images
+        self.render_every_n_frames = render_every_n_frames
         
         # MuJoCo simulation
         self.model = None
@@ -447,6 +449,16 @@ class MujocoHandler:
         if not self.multi_view_renderer:
             return {}
         
+        # Check if we should render this frame
+        should_render = (self.image_step_counter % self.render_every_n_frames) == 0
+        
+        # Increment counter first
+        self.image_step_counter += 1
+        
+        # Only render and save if it's time to do so
+        if not should_render:
+            return {}
+        
         try:
             # Render all views
             images = self.multi_view_renderer.render_all_views()
@@ -460,7 +472,6 @@ class MujocoHandler:
                     filepath = os.path.join(self.image_save_dir, filename)
                     self._save_image(image, filepath)
             
-            self.image_step_counter += 1
             return images
             
         except Exception as e:

@@ -204,3 +204,29 @@ class BaseAgent(ABC):
         }
         
         return offset_map.get(primitive_name, 0.55)
+    
+    def dot(self, a: tuple, b: tuple) -> float:
+        """Dot product helper function from controller.py"""
+        return a[0] * b[0] + a[1] * b[1]
+    
+    def intersect(self, d: tuple, f: tuple, r: float, use_t1: bool = False) -> Optional[float]:
+        """Line-circle intersection from controller.py"""
+        # https://stackoverflow.com/questions/1073336/circle-line-segment-collision-detection-algorithm/1084899%231084899
+        a = self.dot(d, d)
+        b = 2 * self.dot(f, d)
+        c = self.dot(f, f) - r * r
+        discriminant = (b * b) - (4 * a * c)
+        if discriminant >= 0:
+            if use_t1:
+                t1 = (-b - math.sqrt(discriminant)) / (2 * a + 1e-6)
+                if 0 <= t1 <= 1:
+                    return t1
+            else:
+                t2 = (-b + math.sqrt(discriminant)) / (2 * a + 1e-6)
+                if 0 <= t2 <= 1:
+                    return t2
+        return None
+    
+    def restrict_heading_range(self, h: float) -> float:
+        """Normalize heading to [-π, π] range from controller.py"""
+        return (h + math.pi) % (2 * math.pi) - math.pi

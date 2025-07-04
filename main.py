@@ -68,7 +68,7 @@ def main(args):
         from env.mujoco.mujoco_env import BlocksEnv, CabinetEnv, DrawerEnv
         # Use headless mode but enable rendering if saving images
         render_images = args.save_images
-        env = BlocksEnv(render_images=render_images, show_viewer=False, max_episode_steps=1000)
+        env = BlocksEnv(render_images=render_images, show_viewer=False, max_episode_steps=1000, render_every_n_frames=100)
         if args.save_images:
             print("Simulation will run in headless mode with image saving enabled")
     else:

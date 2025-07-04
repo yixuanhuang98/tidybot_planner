@@ -223,50 +223,71 @@ class GoToCabinetHandlePolicy(BaseAgent):
         )
 
     def _execute_base_movement(self, obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Execute base movement following waypoints"""
+        """Execute base movement following waypoints like MotionPlannerPolicy"""
         base_pose = obs['base_pose']
         
+        # Check if we've reached the final waypoint
         if self.current_waypoint_idx >= len(self.base_waypoints):
+            print("[GoToCabinetHandlePolicy] All waypoints completed")
             return None  # Movement complete
         
-        # Compute lookahead position
+        print(f"[GoToCabinetHandlePolicy] Current waypoint index: {self.current_waypoint_idx}/{len(self.base_waypoints)}")
+        print(f"[GoToCabinetHandlePolicy] Base waypoints: {self.base_waypoints}")
+        
+        # Compute lookahead position (simplified version of BaseController logic)
         while True:
             if self.current_waypoint_idx >= len(self.base_waypoints):
                 self.lookahead_position = None
+                print("[GoToCabinetHandlePolicy] Reached end of waypoints, no lookahead")
                 break
                 
             start = self.base_waypoints[self.current_waypoint_idx - 1]
             end = self.base_waypoints[self.current_waypoint_idx]
             d = (end[0] - start[0], end[1] - start[1])
             f = (start[0] - base_pose[0], start[1] - base_pose[1])
-            t2 = self.line_circle_intersection(d, f, self.LOOKAHEAD_DISTANCE)
+            t2 = self.intersect(d, f, self.LOOKAHEAD_DISTANCE)
+            
+            print(f"[GoToCabinetHandlePolicy] Waypoint {self.current_waypoint_idx}: start={start}, end={end}")
+            print(f"[GoToCabinetHandlePolicy] d={d}, f={f}, t2={t2}")
             
             if t2 is not None:
                 self.lookahead_position = [start[0] + t2 * d[0], start[1] + t2 * d[1]]
+                print(f"[GoToCabinetHandlePolicy] Lookahead position: {self.lookahead_position}")
                 break
             if self.current_waypoint_idx == len(self.base_waypoints) - 1:
                 self.lookahead_position = None
+                print("[GoToCabinetHandlePolicy] Last waypoint, no lookahead")
                 break
+            print(f"[GoToCabinetHandlePolicy] Moving to next waypoint: {self.current_waypoint_idx + 1}")
             self.current_waypoint_idx += 1
         
         # Determine target position
         if self.lookahead_position is None:
             target_position = self.base_waypoints[-1]
+            print(f"[GoToCabinetHandlePolicy] Using final waypoint as target: {target_position}")
+            # Check if we've reached the final position
             position_error = self.distance_2d(base_pose[:2], target_position)
+            print(f"[GoToCabinetHandlePolicy] Position error to final target: {position_error:.3f} (tolerance: {self.position_tolerance})")
             if position_error < self.position_tolerance:
+                print("[GoToCabinetHandlePolicy] Reached final position within tolerance")
                 return None  # Movement complete
         else:
             target_position = self.lookahead_position
+            print(f"[GoToCabinetHandlePolicy] Using lookahead as target: {target_position}")
         
         # Compute target heading
         target_heading = base_pose[2]
         if self.target_ee_pos is not None:
+            # Turn to face target end effector position
             dx = self.target_ee_pos[0] - base_pose[0]
             dy = self.target_ee_pos[1] - base_pose[1]
             desired_heading = math.atan2(dy, dx)
             
+            print(f"[GoToCabinetHandlePolicy] Target EE: {self.target_ee_pos}, dx={dx:.3f}, dy={dy:.3f}, desired_heading={desired_heading:.3f}")
+            
             frac = 1
             if self.lookahead_position is not None:
+                # Turn slowly at first, more quickly as we approach
                 remaining_path_length = self.LOOKAHEAD_DISTANCE
                 curr_waypoint = self.lookahead_position
                 for idx in range(self.current_waypoint_idx, len(self.base_waypoints)):
@@ -277,26 +298,30 @@ class GoToCabinetHandlePolicy(BaseAgent):
             
             heading_diff = self.normalize_angle(desired_heading - base_pose[2])
             target_heading += frac * heading_diff
+            print(f"[GoToCabinetHandlePolicy] Heading: current={base_pose[2]:.3f}, desired={desired_heading:.3f}, diff={heading_diff:.3f}, frac={frac:.3f}, target={target_heading:.3f}")
         
-        # Create action
-        return self.create_action(
-            base_pose=np.array([target_position[0], target_position[1], target_heading]),
-            arm_pos=obs['arm_pos'].copy(),
-            arm_quat=obs['arm_quat'].copy(),
-            gripper_pos=obs['gripper_pos'].copy()
-        )
+        # Create action to move towards target
+        action = {
+            'base_pose': np.array([target_position[0], target_position[1], target_heading]),
+            'arm_pos': obs['arm_pos'].copy(),
+            'arm_quat': obs['arm_quat'].copy(),
+            'gripper_pos': obs['gripper_pos'].copy(),
+        }
+        
+        return action
 
     def _build_base_command(self, command: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Build base command using path planning logic"""
+        """Build base command using exact logic from MotionPlannerPolicy"""
         assert command['primitive_name'] in {'move', 'pick', 'place', 'toss', 'shelf', 'drawer'}
 
+        # Base movement only
         if command['primitive_name'] == 'move':
             return {'waypoints': command['waypoints'], 'target_ee_pos': None, 'position_tolerance': 0.1}
 
-        # Modify waypoints for end effector positioning
+        # Modify waypoints so that the end effector is placed at the target end effector position
         target_ee_pos = command['waypoints'][-1]
         end_effector_offset = self.get_end_effector_offset(command['primitive_name'])
-        new_waypoint = None
+        new_waypoint = None  # Find new_waypoint such that distance(new_waypoint, target_ee_pos) == end_effector_offset
         reversed_waypoints = command['waypoints'][::-1]
         
         for idx in range(1, len(reversed_waypoints)):
@@ -304,23 +329,23 @@ class GoToCabinetHandlePolicy(BaseAgent):
             end = reversed_waypoints[idx]
             d = (end[0] - start[0], end[1] - start[1])
             f = (start[0] - target_ee_pos[0], start[1] - target_ee_pos[1])
-            t2 = self.line_circle_intersection(d, f, end_effector_offset)
+            t2 = self.intersect(d, f, end_effector_offset)
             if t2 is not None:
                 new_waypoint = (start[0] + t2 * d[0], start[1] + t2 * d[1])
                 break
                 
         if new_waypoint is not None:
+            # Discard all waypoints that are too close to target_ee_pos
             waypoints = reversed_waypoints[idx:][::-1] + [new_waypoint]
         else:
-            # Base needs to back up
-            print('[GoToCabinetHandlePolicy] Warning: Base deviating from path')
+            # Base is too close to target end effector position and needs to back up
+            print('[GoToCabinetHandlePolicy] Warning: Base needs to deviate from commanded path to reach target position, watch out for potential collisions')
             curr_position = command['waypoints'][0]
             signed_dist = self.distance_2d(curr_position, target_ee_pos) - end_effector_offset
             dx = target_ee_pos[0] - curr_position[0]
             dy = target_ee_pos[1] - curr_position[1]
             target_heading = self.normalize_angle(math.atan2(dy, dx))
-            target_position = (curr_position[0] + signed_dist * math.cos(target_heading), 
-                             curr_position[1] + signed_dist * math.sin(target_heading))
+            target_position = (curr_position[0] + signed_dist * math.cos(target_heading), curr_position[1] + signed_dist * math.sin(target_heading))
             waypoints = [curr_position, target_position]
             
         return {'waypoints': waypoints, 'target_ee_pos': target_ee_pos}

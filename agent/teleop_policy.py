@@ -14,6 +14,9 @@ from scipy.spatial.transform import Rotation as R
 from agent.base_agent import BaseAgent
 from constants import POLICY_CONTROL_PERIOD
 
+DEVICE_CAMERA_OFFSET = np.array([0.0, 0.02, -0.04])  # iPhone 14 Pro
+TWO_PI = 2 * math.pi
+
 
 class WebServer:
     """Web server for WebXR teleop interface"""
@@ -138,7 +141,7 @@ class TeleopController:
         # Update orientation
         base_fwd_vec_rotated = (rot * self.base_xr_ref_rot_inv).apply([1.0, 0.0, 0.0])
         base_target_theta = self.base_ref_pose[2] + math.atan2(base_fwd_vec_rotated[1], base_fwd_vec_rotated[0])
-        self.base_target_pose[2] += (base_target_theta - self.base_target_pose[2] + math.pi) % (2 * math.pi) - math.pi
+        self.base_target_pose[2] += (base_target_theta - self.base_target_pose[2] + math.pi) % TWO_PI - math.pi  # Unwrapped
 
     def _process_arm_teleop(self, pos: np.ndarray, rot: R, gripper_delta: float):
         """Process arm teleoperation"""
@@ -171,14 +174,12 @@ class TeleopController:
     @staticmethod
     def convert_webxr_pose(pos: Dict[str, float], quat: Dict[str, float]) -> tuple:
         """Convert WebXR pose to robot coordinates"""
-        device_camera_offset = np.array([0.0, 0.02, -0.04])  # iPhone 14 Pro
-        
         # WebXR: +x right, +y up, +z back; Robot: +x forward, +y left, +z up
         pos_array = np.array([-pos['z'], -pos['x'], pos['y']], dtype=np.float64)
         rot = R.from_quat([-quat['z'], -quat['x'], quat['y'], quat['w']])
 
-        # Apply offset so rotations are around device center
-        pos_array = pos_array + rot.apply(device_camera_offset)
+        # Apply offset so that rotations are around device center instead of device camera
+        pos_array = pos_array + rot.apply(DEVICE_CAMERA_OFFSET)
 
         return pos_array, rot
 
