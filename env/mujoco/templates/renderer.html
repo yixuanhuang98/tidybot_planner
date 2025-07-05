@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MuJoCo Renderer - Real-Time Views</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            color: #333;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+            color: #2c3e50;
+        }
+        
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+            color: white;
+        }
+        
+        .btn-danger {
+            background: linear-gradient(45deg, #f44336, #d32f2f);
+            color: white;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+        }
+        
+        .btn:active {
+            transform: translateY(0);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .stats {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .stat-card {
+            background: rgba(255,255,255,0.9);
+            padding: 15px 25px;
+            border-radius: 15px;
+            text-align: center;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(0,0,0,0.1);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        
+        .stat-label {
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+        
+        .views-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .view-card {
+            background: rgba(255,255,255,0.9);
+            border-radius: 20px;
+            padding: 20px;
+            text-align: center;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(0,0,0,0.1);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+        
+        .view-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+        }
+        
+        .view-title {
+            font-size: 1.5em;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: #2c3e50;
+        }
+        
+        .view-image {
+            max-width: 100%;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            transition: all 0.3s ease;
+        }
+        
+        .view-image:hover {
+            transform: scale(1.05);
+        }
+        
+        .placeholder {
+            width: 100%;
+            height: 300px;
+            background: linear-gradient(45deg, #e9ecef, #dee2e6);
+            border-radius: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2em;
+            color: #6c757d;
+            border: 2px dashed #ced4da;
+        }
+        
+        .status-indicator {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            border-radius: 25px;
+            font-weight: bold;
+            z-index: 1000;
+        }
+        
+        .status-connected {
+            background: rgba(76, 175, 80, 0.95);
+            color: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .status-disconnected {
+            background: rgba(244, 67, 54, 0.95);
+            color: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .loading {
+            opacity: 0.6;
+        }
+        
+        .error-message {
+            text-align: center;
+            padding: 20px;
+            background: rgba(244, 67, 54, 0.08);
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            border-radius: 10px;
+            margin: 20px 0;
+            color: #721c24;
+        }
+        
+        @media (max-width: 768px) {
+            .views-container {
+                grid-template-columns: 1fr;
+            }
+            
+            .controls {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .stats {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="status-indicator" id="statusIndicator">
+        <span id="statusText">Connecting...</span>
+    </div>
+    
+    <div class="header">
+        <h1>🤖 MuJoCo Renderer</h1>
+        <p style="color: #6c757d;">Real-Time Multi-View Simulation</p>
+    </div>
+    
+    <div class="controls">
+        <button class="btn btn-primary" id="startBtn" onclick="startStream()">
+            ▶️ Start Streaming
+        </button>
+        <button class="btn btn-danger" id="stopBtn" onclick="stopStream()">
+            ⏹️ Stop Streaming
+        </button>
+    </div>
+    
+    <div class="stats">
+        <div class="stat-card">
+            <div class="stat-value" id="fpsValue">0</div>
+            <div class="stat-label">FPS</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="frameCount">0</div>
+            <div class="stat-label">Frames</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="runtime">0s</div>
+            <div class="stat-label">Runtime</div>
+        </div>
+    </div>
+    
+    <div class="views-container" id="viewsContainer">
+        {% for view_name in view_names %}
+        <div class="view-card">
+            <div class="view-title">{{ view_name|title }} View</div>
+            <div class="placeholder" id="placeholder-{{ view_name }}">
+                Waiting for stream...
+            </div>
+            <img class="view-image" id="image-{{ view_name }}" style="display: none;">
+        </div>
+        {% endfor %}
+    </div>
+    
+    <script>
+        // Initialize Socket.IO connection
+        const socket = io();
+        
+        // State management
+        let isStreaming = false;
+        let startTime = Date.now();
+        let frameCount = 0;
+        
+        // DOM elements
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const fpsValue = document.getElementById('fpsValue');
+        const frameCountElement = document.getElementById('frameCount');
+        const runtimeElement = document.getElementById('runtime');
+        
+        // Socket events
+        socket.on('connect', function() {
+            updateStatus('Connected', true);
+            console.log('Connected to server');
+        });
+        
+        socket.on('disconnect', function() {
+            updateStatus('Disconnected', false);
+            console.log('Disconnected from server');
+        });
+        
+        socket.on('status', function(data) {
+            isStreaming = data.streaming;
+            updateButtons();
+        });
+        
+        socket.on('frame_update', function(data) {
+            // Update images
+            for (const [viewName, imageData] of Object.entries(data.images)) {
+                const img = document.getElementById(`image-${viewName}`);
+                const placeholder = document.getElementById(`placeholder-${viewName}`);
+                
+                if (img && placeholder) {
+                    img.src = imageData;
+                    img.style.display = 'block';
+                    placeholder.style.display = 'none';
+                    img.style.opacity = '1';
+                }
+            }
+            
+            // Update frame count
+            frameCount = data.frame_count;
+            frameCountElement.textContent = frameCount;
+            
+            // Update stats
+            updateStats();
+        });
+        
+        // Control functions
+        function startStream() {
+            fetch('/api/start_stream')
+                .then(response => response.json())
+                .then(data => {
+                    isStreaming = data.streaming;
+                    updateButtons();
+                    if (isStreaming) {
+                        startTime = Date.now();
+                        frameCount = 0;
+                    }
+                })
+                .catch(error => console.error('Error starting stream:', error));
+        }
+        
+        function stopStream() {
+            fetch('/api/stop_stream')
+                .then(response => response.json())
+                .then(data => {
+                    isStreaming = data.streaming;
+                    updateButtons();
+                })
+                .catch(error => console.error('Error stopping stream:', error));
+        }
+        
+        function updateStatus(text, connected) {
+            statusText.textContent = text;
+            statusIndicator.className = connected ? 'status-indicator status-connected' : 'status-indicator status-disconnected';
+        }
+        
+        function updateButtons() {
+            startBtn.disabled = isStreaming;
+            stopBtn.disabled = !isStreaming;
+        }
+        
+        function updateStats() {
+            const runtime = (Date.now() - startTime) / 1000;
+            const fps = frameCount / runtime;
+            
+            fpsValue.textContent = fps.toFixed(1);
+            runtimeElement.textContent = runtime.toFixed(1) + 's';
+        }
+        
+        // Initialize
+        updateButtons();
+        
+        // Periodic stats update
+        setInterval(updateStats, 1000);
+        
+        // Request initial frame
+        setTimeout(() => {
+            socket.emit('request_frame');
+        }, 1000);
+    </script>
+</body>
+</html> 

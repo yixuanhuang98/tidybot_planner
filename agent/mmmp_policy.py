@@ -5,6 +5,7 @@ from enum import Enum
 
 # Import BaseAgent base class
 from .base_agent import BaseAgent
+from .planning_utils import dot, intersect, distance, restrict_heading_range
 
 
 class PickState(Enum):
@@ -19,14 +20,14 @@ class PlaceState(Enum):
     RELEASE = "release"
 
 
-# Motion Planner generated plan. 
-class MotionPlannerPolicy(BaseAgent):
+# Modified Motion Planner Policy with strict 0.55m positioning and sequential base-arm execution
+class MMMPPolicy(BaseAgent):
     # Base following parameters (from BaseController)
     LOOKAHEAD_DISTANCE = 0.3  # 30 cm
     POSITION_TOLERANCE = 0.005  # 0.5 cm (reduced from 1.5 cm)
     HEADING_TOLERANCE = math.radians(2.1)  # 2.1 degrees
     GRASP_BASE_TOLERANCE = 0.002  # 0.2 cm for grasp
-    PLACE_BASE_TOLERANCE = 0.02   # 1.0 cm for placement (example, adjust as needed)
+    PLACE_BASE_TOLERANCE = 0.02   # 1.0 cm for placement
     
     # Object and target locations
     PLACEMENT_X_OFFSET = 0.5  # 50cm in X direction
@@ -38,6 +39,13 @@ class MotionPlannerPolicy(BaseAgent):
     PICK_LIFT_DIST = 0.28  # Net lift is (PICK_LIFT_DIST - PICK_LOWER_DIST)
     PLACE_APPROACH_HEIGHT_OFFSET = 0.10
 
+    # Fixed end effector offset - always 0.55m for consistent positioning
+    FIXED_END_EFFECTOR_OFFSET = 0.55
+
+    # Base stopping verification parameters
+    BASE_STOP_VELOCITY_THRESHOLD = 0.01  # Consider base stopped if velocity < 1cm/s
+    BASE_STOP_CONFIRMATION_FRAMES = 5    # Confirm base has stopped for 5 consecutive frames
+
     # Grasping parameters
     GRASP_SUCCESS_THRESHOLD = 0.6
     GRASP_PROGRESS_THRESHOLD = 0.3
@@ -46,15 +54,19 @@ class MotionPlannerPolicy(BaseAgent):
 
     def __init__(self):
         # Motion planning state - following controller.py pattern
-        self.state = 'idle'  # States: idle, moving, manipulating, grasping
+        self.state = 'idle'  # States: idle, moving, base_stopping, manipulating
         self.current_command = None
         self.base_waypoints = []
         self.current_waypoint_idx = 0
         self.target_ee_pos = None
-        self.grasp_state = None  # Replaces grasp_step
+        self.grasp_state = None
         
         # Base following parameters
         self.lookahead_position = None
+        
+        # Base stopping verification
+        self.prev_base_poses = []  # Store recent base poses to check if stopped
+        self.base_stop_frames = 0  # Counter for consecutive stopped frames
         
         # Object and target locations (using ground truth from MuJoCo)
         self.object_location = None
@@ -64,7 +76,7 @@ class MotionPlannerPolicy(BaseAgent):
         self.enabled = True
         self.episode_ended = False
         
-        print(f'Motion planner policy initialized - ready to start automatically')
+        print(f'MMMP policy initialized - base will position at exactly {self.FIXED_END_EFFECTOR_OFFSET}m from target')
 
     def reset(self):
         # Reset motion planning state
@@ -77,6 +89,10 @@ class MotionPlannerPolicy(BaseAgent):
         self.episode_ended = False
         self.grasp_state = None
         
+        # Reset base stopping verification
+        self.prev_base_poses = []
+        self.base_stop_frames = 0
+        
         # Clean up any grasp tracking variables
         if hasattr(self, 'grasp_start_time'):
             delattr(self, 'grasp_start_time')
@@ -86,7 +102,7 @@ class MotionPlannerPolicy(BaseAgent):
         # Enable policy execution immediately
         self.enabled = True
         
-        print("Motion planner reset - starting episode automatically")
+        print("MMMP policy reset - starting episode automatically")
 
     def step(self, obs):
         # Return no action if episode has ended
@@ -109,72 +125,69 @@ class MotionPlannerPolicy(BaseAgent):
         # Debug: Print current base pose
         print(f"Current base pose: [{base_pose[0]:.3f}, {base_pose[1]:.3f}, {base_pose[2]:.3f}]")
 
-        # State machine following controller.py pattern
+        # State machine with strict base-arm sequencing
         if self.state == 'idle':
             # Detect objects and plan new command
             detected_objects = self.detect_objects_from_ground_truth(obs)
-            if detected_objects:
-                # Create pick command
-                self.object_location = detected_objects[0]
-                # Set placement location relative to detected object (e.g., 50cm away)
-                self.target_location = np.array([
-                    self.object_location[0] + self.PLACEMENT_X_OFFSET,  # 50cm in X direction
-                    self.object_location[1],        # Same Y as object
-                    self.object_location[2]         # Same Z as object (table height)
-                ])
-                
-                pick_command = {
-                    'primitive_name': 'pick',
-                    'waypoints': [base_pose[:2].tolist(), self.object_location[:2].tolist()],
-                    'object_3d_pos': self.object_location.copy()  # Store full 3D position
-                }
-                
-                print(f"Object detected at: {self.object_location}")
-                print(f"Target placement location: {self.target_location}")
-                print(f"Creating pick command with waypoints: {pick_command['waypoints']}")
-                
-                # Build base command and start moving
-                base_command = self.build_base_command(pick_command)
-                if base_command:
-                    self.current_command = pick_command
-                    self.base_waypoints = base_command['waypoints']
-                    self.target_ee_pos = base_command['target_ee_pos']
-                    self.current_waypoint_idx = 1
-                    self.lookahead_position = None
-                    self.state = 'moving'
-                    print(f"Starting base movement to object at {self.object_location}")
-                    print(f"Base waypoints: {self.base_waypoints}")
-                    print(f"Target EE position: {self.target_ee_pos}")
-                else:
-                    print("Failed to build base command")
-            else:
-                # No objects found, do nothing
+            if not detected_objects:
                 return None
+            
+            self.object_location = detected_objects[0]
+            # Set placement location relative to detected object (e.g., 50cm away)
+            self.target_location = np.array([
+                self.object_location[0] + self.PLACEMENT_X_OFFSET,  # 50cm in X direction
+                self.object_location[1],        # Same Y as object
+                self.object_location[2]         # Same Z as object (table height)
+            ])
+            
+            pick_command = {
+                'primitive_name': 'pick',
+                'waypoints': [base_pose[:2].tolist(), self.object_location[:2].tolist()],
+                'object_3d_pos': self.object_location.copy()  # Store full 3D position
+            }
+            
+            print(f"Object detected at: {self.object_location}")
+            print(f"Target placement location: {self.target_location}")
+            print(f"Creating pick command with waypoints: {pick_command['waypoints']}")
+            
+            # Build base command and start moving
+            base_command = self.build_base_command(pick_command)
+
+            # waypoints are [x, y, theta]
+            # waypoints[0] is the current base pose
+            # waypoints[1,:2]  = self.find_base_waypoint(command['waypoints'], target_ee_pos)
+            # waypoints[1,2] = self.find_base_heading(command['waypoints'][0], self.object_location)
+            
+            
+
+            print(f"Base command: {base_command}")
+            
+            if base_command:
+                self.current_command = pick_command
+                self.base_waypoints = base_command['waypoints']
+                self.target_ee_pos = base_command['target_ee_pos']
+                self.current_waypoint_idx = 1
+                self.lookahead_position = None
+                self.state = 'moving'
+                self.prev_base_poses = []  # Reset base pose tracking
+                self.base_stop_frames = 0
+                print(f"Starting base movement to object at {self.object_location}")
+                print(f"Base waypoints: {self.base_waypoints}")
+                print(f"Target EE position: {self.target_ee_pos}")
+                print(f"Will position base at exactly {self.FIXED_END_EFFECTOR_OFFSET}m from target")
+            else:
+                print("Failed to build base command")
+
                 
         elif self.state == 'moving':
-            # Execute base movement following waypoints (like BaseController)
+            # Execute base movement following waypoints
             action = self.execute_base_movement(obs)
             if action is None:  # Base movement complete
-                print("Base movement complete!")
-                # Check if we're close enough for arm manipulation
-                if self.target_ee_pos is not None:
-                    distance_to_target = self.distance(base_pose[:2], self.target_ee_pos)
-                    end_effector_offset = self.get_end_effector_offset(self.current_command['primitive_name'])
-                    diff = abs(end_effector_offset - distance_to_target)
-                    print(f"Distance to target EE: {distance_to_target:.3f}, EE offset: {end_effector_offset:.3f}, diff: {diff:.3f}")
-                    if self.current_command['primitive_name'] == 'pick':
-                        base_tolerance = self.GRASP_BASE_TOLERANCE
-                    else:
-                        base_tolerance = self.PLACE_BASE_TOLERANCE
-                    if diff < base_tolerance:
-                    # if diff < 0.002:  # 0.2 cm tolerance (reduced from 10 cm)
-                        self.state = 'manipulating'
-                        print("Base reached target, starting arm manipulation")
-                    else:
-                        print(f'Too far from target end effector position ({(100 * diff):.1f} cm)')
-                        self.state = 'idle'
-                else:
-                    self.state = 'idle'
+                print("Base movement complete! Verifying base has stopped...")
+                # Transition to base_stopping state to confirm base has stopped
+                self.state = 'base_stopping'
+                self.prev_base_poses = []
+                self.base_stop_frames = 0
             else:
                 # Print target base pose from action
                 if action and 'base_pose' in action:
@@ -182,8 +195,66 @@ class MotionPlannerPolicy(BaseAgent):
                     print(f"Target base pose: [{target_pose[0]:.3f}, {target_pose[1]:.3f}, {target_pose[2]:.3f}]")
             return action
             
+        elif self.state == 'base_stopping':
+            # Verify that base has completely stopped before starting arm manipulation
+            current_base_pose = base_pose[:2]  # Only x, y for position tracking
+            
+            # Store recent base poses
+            self.prev_base_poses.append(current_base_pose.copy())
+            if len(self.prev_base_poses) > self.BASE_STOP_CONFIRMATION_FRAMES:
+                self.prev_base_poses.pop(0)
+            
+            # Check if base has stopped moving
+            base_stopped = False
+            if len(self.prev_base_poses) >= self.BASE_STOP_CONFIRMATION_FRAMES:
+                # Calculate velocity over recent frames
+                max_velocity = 0
+                for i in range(1, len(self.prev_base_poses)):
+                    velocity = distance(self.prev_base_poses[i-1], self.prev_base_poses[i])
+                    max_velocity = max(max_velocity, velocity)
+                
+                if max_velocity < self.BASE_STOP_VELOCITY_THRESHOLD:
+                    self.base_stop_frames += 1
+                    print(f"Base stopping verification: frame {self.base_stop_frames}/{self.BASE_STOP_CONFIRMATION_FRAMES}, max_vel: {max_velocity:.4f}")
+                else:
+                    self.base_stop_frames = 0  # Reset if base is still moving
+                    print(f"Base still moving, max velocity: {max_velocity:.4f}")
+                
+                if self.base_stop_frames >= self.BASE_STOP_CONFIRMATION_FRAMES:
+                    base_stopped = True
+            
+            if base_stopped:
+                # Verify we're at correct distance from target
+                if self.target_ee_pos is not None:
+                    distance_to_target = distance(base_pose[:2], self.target_ee_pos)
+                    distance_error = abs(distance_to_target - self.FIXED_END_EFFECTOR_OFFSET)
+                    print(f"Base stopped! Distance to target: {distance_to_target:.3f}m, target: {self.FIXED_END_EFFECTOR_OFFSET}m, error: {distance_error:.4f}m")
+                    
+                    if self.current_command['primitive_name'] == 'pick':
+                        tolerance = self.GRASP_BASE_TOLERANCE
+                    else:
+                        tolerance = self.PLACE_BASE_TOLERANCE
+                        
+                    if distance_error < tolerance:
+                        self.state = 'manipulating'
+                        print("Base properly positioned and stopped! Starting arm manipulation")
+                    else:
+                        print(f'Base stopped but not at correct distance (error: {distance_error*100:.1f}cm > {tolerance*100:.1f}cm)')
+                        self.state = 'idle'
+                else:
+                    self.state = 'idle'
+            
+            # Hold current pose while verifying base has stopped
+            action = {
+                'base_pose': base_pose.copy(),
+                'arm_pos': arm_pos.copy(),
+                'arm_quat': arm_quat.copy(),
+                'gripper_pos': gripper_pos.copy(),
+            }
+            return action
+            
         elif self.state == 'manipulating':
-            # Execute arm manipulation
+            # Execute arm manipulation (same logic as original)
             if self.current_command['primitive_name'] == 'pick':
                 if self.grasp_state is None:
                     self.grasp_state = PickState.APPROACH
@@ -199,7 +270,7 @@ class MotionPlannerPolicy(BaseAgent):
                 global_diff = np.array([
                     object_3d_pos[0] - base_pose[0],
                     object_3d_pos[1] - base_pose[1], 
-                    object_3d_pos[2] + self.PICK_APPROACH_HEIGHT_OFFSET - self.ROBOT_BASE_HEIGHT  # Object height + higher offset - base height (was 0.15, now 0.25)
+                    object_3d_pos[2] + self.PICK_APPROACH_HEIGHT_OFFSET - self.ROBOT_BASE_HEIGHT
                 ])
                 
                 # Transform to base's local coordinate frame (account for base rotation)
@@ -212,7 +283,7 @@ class MotionPlannerPolicy(BaseAgent):
                     sin_angle * global_diff[0] + cos_angle * global_diff[1],
                     global_diff[2]  # Z component unchanged
                 ])
-                print(f"Primary path: global_diff = {global_diff}")
+                print(f"Arm manipulation: global_diff = {global_diff}")
                 
                 print(f"Base angle: {base_pose[2]:.3f} rad ({math.degrees(base_pose[2]):.1f} deg)")
                 print(f"Object global pos: {self.current_command.get('object_3d_pos', 'N/A')}")
@@ -303,15 +374,17 @@ class MotionPlannerPolicy(BaseAgent):
                             self.lookahead_position = None
                             self.state = 'moving'
                             self.grasp_state = None  # Reset for next manipulation
+                            self.prev_base_poses = []  # Reset base tracking
+                            self.base_stop_frames = 0
                             print(f"Starting base movement to placement location at {self.target_location}")
                         else:
                             print("Failed to build place command")
                             self.episode_ended = True
                             self.state = 'idle'
 
-                # Create action from targets
+                # Create action from targets (hold base pose steady during arm manipulation)
                 action = {
-                    'base_pose': base_pose.copy(),
+                    'base_pose': base_pose.copy(),  # Keep base stationary
                     'arm_pos': target_arm_pos,
                     'arm_quat': target_arm_quat,
                     'gripper_pos': target_gripper_pos,
@@ -333,7 +406,7 @@ class MotionPlannerPolicy(BaseAgent):
                 global_diff = np.array([
                     target_3d_pos[0] - base_pose[0],
                     target_3d_pos[1] - base_pose[1], 
-                    target_3d_pos[2] + self.PLACE_APPROACH_HEIGHT_OFFSET - self.ROBOT_BASE_HEIGHT  # Target height + offset - base height
+                    target_3d_pos[2] + self.PLACE_APPROACH_HEIGHT_OFFSET - self.ROBOT_BASE_HEIGHT
                 ])
                 
                 # Transform to base's local coordinate frame (account for base rotation)
@@ -374,9 +447,9 @@ class MotionPlannerPolicy(BaseAgent):
                         self.episode_ended = True  # End the episode
                         self.state = 'idle'
                 
-                # Create action from targets
+                # Create action from targets (hold base pose steady during arm manipulation)
                 action = {
-                    'base_pose': base_pose.copy(),
+                    'base_pose': base_pose.copy(),  # Keep base stationary
                     'arm_pos': target_arm_pos,
                     'arm_quat': target_arm_quat,
                     'gripper_pos': target_gripper_pos,
@@ -416,7 +489,7 @@ class MotionPlannerPolicy(BaseAgent):
             end = self.base_waypoints[self.current_waypoint_idx]
             d = (end[0] - start[0], end[1] - start[1])
             f = (start[0] - base_pose[0], start[1] - base_pose[1])
-            t2 = self.intersect(d, f, self.LOOKAHEAD_DISTANCE)
+            t2 = intersect(d, f, self.LOOKAHEAD_DISTANCE)
             
             print(f"Waypoint {self.current_waypoint_idx}: start={start}, end={end}")
             print(f"d={d}, f={f}, t2={t2}")
@@ -437,7 +510,7 @@ class MotionPlannerPolicy(BaseAgent):
             target_position = self.base_waypoints[-1]
             print(f"Using final waypoint as target: {target_position}")
             # Check if we've reached the final position
-            position_error = self.distance(base_pose[:2], target_position)
+            position_error = distance(base_pose[:2], target_position)
             print(f"Position error to final target: {position_error:.3f} (tolerance: {self.POSITION_TOLERANCE})")
             if position_error < self.POSITION_TOLERANCE:
                 print("Reached final position within tolerance")
@@ -452,7 +525,7 @@ class MotionPlannerPolicy(BaseAgent):
             # Turn to face target end effector position
             dx = self.target_ee_pos[0] - base_pose[0]
             dy = self.target_ee_pos[1] - base_pose[1]
-            desired_heading = math.atan2(dy, dx)  # Removed + math.pi to point towards target, not away
+            desired_heading = math.atan2(dy, dx)
             
             print(f"Target EE: {self.target_ee_pos}, dx={dx:.3f}, dy={dy:.3f}, desired_heading={desired_heading:.3f}")
             
@@ -463,11 +536,11 @@ class MotionPlannerPolicy(BaseAgent):
                 curr_waypoint = self.lookahead_position
                 for idx in range(self.current_waypoint_idx, len(self.base_waypoints)):
                     next_waypoint = self.base_waypoints[idx]
-                    remaining_path_length += self.distance(curr_waypoint, next_waypoint)
+                    remaining_path_length += distance(curr_waypoint, next_waypoint)
                     curr_waypoint = next_waypoint
                 frac = math.sqrt(self.LOOKAHEAD_DISTANCE / max(remaining_path_length, self.LOOKAHEAD_DISTANCE))
             
-            heading_diff = self.restrict_heading_range(desired_heading - base_pose[2])
+            heading_diff = restrict_heading_range(desired_heading - base_pose[2])
             target_heading += frac * heading_diff
             print(f"Heading: current={base_pose[2]:.3f}, desired={desired_heading:.3f}, diff={heading_diff:.3f}, frac={frac:.3f}, target={target_heading:.3f}")
         
@@ -481,27 +554,69 @@ class MotionPlannerPolicy(BaseAgent):
         
         return action
 
-    def dot(self, a, b):
-        """Dot product helper function from controller.py"""
-        return a[0] * b[0] + a[1] * b[1]
+    def find_base_heading(self, base_pose, object_location):
+        """
+        Compute the robot base final heading angle such that the robot faces the object as it approaches.
+        Args:
+            base_pose: [x, y, theta] list or array (robot base position and current heading)
+            object_location: [x, y, z] list or array (object position)
+        Returns:
+            heading (float): angle in radians, so the robot faces the object
+        """
+        dx = object_location[0] - base_pose[0]
+        dy = object_location[1] - base_pose[1]
+        heading = math.atan2(dy, dx)
+        return heading 
 
-    def intersect(self, d, f, r, use_t1=False):
-        """Line-circle intersection from controller.py"""
-        # https://stackoverflow.com/questions/1073336/circle-line-segment-collision-detection-algorithm/1084899%231084899
-        a = self.dot(d, d)
-        b = 2 * self.dot(f, d)
-        c = self.dot(f, f) - r * r
-        discriminant = (b * b) - (4 * a * c)
-        if discriminant >= 0:
-            if use_t1:
-                t1 = (-b - math.sqrt(discriminant)) / (2 * a + 1e-6)
-                if 0 <= t1 <= 1:
-                    return t1
-            else:
-                t2 = (-b + math.sqrt(discriminant)) / (2 * a + 1e-6)
-                if 0 <= t2 <= 1:
-                    return t2
-        return None
+    def find_base_waypoint(self, command_waypoints, target_ee_pos):
+        """
+        Find the optimal base waypoint position that places the base exactly 
+        FIXED_END_EFFECTOR_OFFSET distance away from the target end effector position.
+        
+        Args:
+            command_waypoints: List of waypoints from the original command
+            target_ee_pos: Target end effector position [x, y]
+            
+        Returns:
+            List of waypoints for base movement
+        """
+        new_waypoint = None  # Find new_waypoint such that distance(new_waypoint, target_ee_pos) == FIXED_END_EFFECTOR_OFFSET
+        reversed_waypoints = command_waypoints[::-1]
+        
+        # Try to find intersection point along the path that is exactly FIXED_END_EFFECTOR_OFFSET away
+        for idx in range(1, len(reversed_waypoints)):
+            start = reversed_waypoints[idx - 1]
+            end = reversed_waypoints[idx]
+            d = (end[0] - start[0], end[1] - start[1])
+            f = (start[0] - target_ee_pos[0], start[1] - target_ee_pos[1])
+            t2 = intersect(d, f, self.FIXED_END_EFFECTOR_OFFSET)
+            if t2 is not None:
+                new_waypoint = (start[0] + t2 * d[0], start[1] + t2 * d[1])
+                break
+                
+        if new_waypoint is not None:
+            # Discard all waypoints that are too close to target_ee_pos
+            waypoints = reversed_waypoints[idx:][::-1] + [new_waypoint]
+        else:
+            # Base is too close to target end effector position and needs to back up
+            print('Warning: Base needs to deviate from commanded path to reach target position, watch out for potential collisions')
+            curr_position = command_waypoints[0]
+            signed_dist = distance(curr_position, target_ee_pos) - self.FIXED_END_EFFECTOR_OFFSET
+            dx = target_ee_pos[0] - curr_position[0]
+            dy = target_ee_pos[1] - curr_position[1]
+            target_heading = restrict_heading_range(math.atan2(dy, dx))
+            target_position = (curr_position[0] + signed_dist * math.cos(target_heading), curr_position[1] + signed_dist * math.sin(target_heading))
+            waypoints = [curr_position, target_position]
+            
+        return waypoints
+
+    def build_base_command(self, command):
+        # Use the dedicated function to find optimal base waypoints
+        target_ee_pos = command['waypoints'][-1]
+        waypoints = self.find_base_waypoint(command['waypoints'], target_ee_pos)
+            
+        return {'waypoints': waypoints, 
+                'target_ee_pos': target_ee_pos} 
 
     def detect_objects_from_ground_truth(self, obs):
         """Detect objects using ground truth from MuJoCo simulation and find the one with smallest x value"""
@@ -525,63 +640,5 @@ class MotionPlannerPolicy(BaseAgent):
             detected_objects.append(target_cube_pos)
             print(f"Selected cube {target_cube_id} with smallest x value: {target_cube_pos[0]:.3f}")
         
-        return detected_objects
+        return detected_objects 
 
-    def distance(self, pt1, pt2):
-        """Calculate distance between two points from controller.py"""
-        return math.sqrt((pt2[0] - pt1[0])**2 + (pt2[1] - pt1[1])**2)
-
-    def restrict_heading_range(self, h):
-        """Normalize heading to [-π, π] range from controller.py"""
-        return (h + math.pi) % (2 * math.pi) - math.pi
-
-    def get_end_effector_offset(self, primitive_name):
-        """Calculate end-effector offset based on task and gripper state from controller.py"""
-        # Simplified version - assume gripper starts open
-        gripper_open = True  
-        if gripper_open:
-            return 0.55
-        return {'toss': 1.30, 'shelf': 0.75, 'drawer': 0.80}.get(primitive_name, 0.55)
-
-    def build_base_command(self, command):
-        """Build base command using exact logic from controller.py"""
-        assert command['primitive_name'] in {'move', 'pick', 'place', 'toss', 'shelf', 'drawer'}
-
-        # Base movement only
-        if command['primitive_name'] == 'move':
-            return {'waypoints': command['waypoints'], 
-                    'target_ee_pos': None, 
-                    'position_tolerance': 0.1}
-
-        # Modify waypoints so that the end effector is placed at the target end effector position
-        target_ee_pos = command['waypoints'][-1]
-        end_effector_offset = self.get_end_effector_offset(command['primitive_name'])
-        new_waypoint = None  # Find new_waypoint such that distance(new_waypoint, target_ee_pos) == end_effector_offset
-        reversed_waypoints = command['waypoints'][::-1]
-        
-        for idx in range(1, len(reversed_waypoints)):
-            start = reversed_waypoints[idx - 1]
-            end = reversed_waypoints[idx]
-            d = (end[0] - start[0], end[1] - start[1])
-            f = (start[0] - target_ee_pos[0], start[1] - target_ee_pos[1])
-            t2 = self.intersect(d, f, end_effector_offset)
-            if t2 is not None:
-                new_waypoint = (start[0] + t2 * d[0], start[1] + t2 * d[1])
-                break
-                
-        if new_waypoint is not None:
-            # Discard all waypoints that are too close to target_ee_pos
-            waypoints = reversed_waypoints[idx:][::-1] + [new_waypoint]
-        else:
-            # Base is too close to target end effector position and needs to back up
-            print('Warning: Base needs to deviate from commanded path to reach target position, watch out for potential collisions')
-            curr_position = command['waypoints'][0]
-            signed_dist = self.distance(curr_position, target_ee_pos) - end_effector_offset
-            dx = target_ee_pos[0] - curr_position[0]
-            dy = target_ee_pos[1] - curr_position[1]
-            target_heading = self.restrict_heading_range(math.atan2(dy, dx))
-            target_position = (curr_position[0] + signed_dist * math.cos(target_heading), curr_position[1] + signed_dist * math.sin(target_heading))
-            waypoints = [curr_position, target_position]
-            
-        return {'waypoints': waypoints, 
-                'target_ee_pos': target_ee_pos} 
