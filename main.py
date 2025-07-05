@@ -12,7 +12,7 @@ from agent.motion_planner_policy import MotionPlannerPolicy
 from agent.go_to_cabinet_handle_policy import GoToCabinetHandlePolicy
 from agent.go_to_cabinet_handle_policy_right import GoToCabinetHandlePolicyRight
 from agent.mmmp_policy import MMMPPolicy
-# from agent.motion_planner_policy_stack import MotionPlannerPolicyStack
+from agent.motion_planner_stack_policy import MotionPlannerPolicyStack
 
 def run_episode(env, policy):
     # Reset the env
