@@ -130,6 +130,10 @@ def main(args):
             args.web_renderer = False
 
     # Create policy
+    socketio_instance = None
+    if web_renderer and args.web_renderer:
+        socketio_instance = web_renderer.socketio
+    
     if args.goto_cabinet_handle:
         policy = GoToCabinetHandlePolicy()
     elif args.goto_cabinet_handle_right:
@@ -139,7 +143,7 @@ def main(args):
     elif args.motion_planner_stack:
         policy = MotionPlannerPolicyStack()
     elif args.mmmp:
-        policy = MMMPPolicy()
+        policy = MMMPPolicy(socketio=socketio_instance)
     elif args.teleop:
         policy = TeleopPolicy()
     else:

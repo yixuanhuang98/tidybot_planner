@@ -20,6 +20,189 @@ class PlaceState(Enum):
     RELEASE = "release"
 
 
+class ManipulatePrimitive:
+    """Class to handle individual manipulation phases"""
+    
+    def __init__(self, policy_instance):
+        self.policy = policy_instance
+        
+    def _extract_observations(self, obs):
+        """Extract common observation values"""
+        return (
+            obs['base_pose'],
+            obs['arm_pos'], 
+            obs['arm_quat'],
+            obs['gripper_pos']
+        )
+    
+    def _calculate_target_relative_pos(self, obs, target_3d_pos, height_offset):
+        """Calculate target position in base's local coordinate frame"""
+        base_pose = obs['base_pose']
+        
+        # Calculate global position difference
+        global_diff = np.array([
+            target_3d_pos[0] - base_pose[0],
+            target_3d_pos[1] - base_pose[1], 
+            target_3d_pos[2] + height_offset - self.policy.ROBOT_BASE_HEIGHT
+        ])
+        
+        # Transform to base's local coordinate frame
+        base_angle = base_pose[2]
+        cos_angle = math.cos(-base_angle)
+        sin_angle = math.sin(-base_angle)
+        
+        target_relative_pos = np.array([
+            cos_angle * global_diff[0] - sin_angle * global_diff[1],
+            sin_angle * global_diff[0] + cos_angle * global_diff[1],
+            global_diff[2]
+        ])
+        
+        return target_relative_pos
+        
+    def _get_gripper_down_quat(self):
+        """Get standard gripper down quaternion"""
+        return np.array([1.0, 0.0, 0.0, 0.0])
+    
+    def approaching(self, obs, target_3d_pos):
+        """Phase 1: Moving end effector to target pose (approach)"""
+        base_pose, arm_pos, arm_quat, gripper_pos = self._extract_observations(obs)
+        
+        # Calculate target position with approach height offset
+        target_relative_pos = self._calculate_target_relative_pos(
+            obs, target_3d_pos, self.policy.PICK_APPROACH_HEIGHT_OFFSET
+        )
+        
+        # Position arm above object with open gripper (safe approach)
+        target_arm_pos = target_relative_pos
+        target_arm_quat = self._get_gripper_down_quat()
+        target_gripper_pos = np.array([0.0])  # Gripper open
+
+        print(f"Approaching: Positioning arm above object with open gripper")
+        
+        # Check if positioned correctly
+        phase_complete = np.allclose(arm_pos, target_arm_pos, atol=0.03)  # 3cm tolerance
+        if phase_complete:
+            print("Arm positioned above object, moving to lower approach")
+            
+        return target_arm_pos, target_arm_quat, target_gripper_pos, phase_complete
+    
+    def topgrasp(self, obs, target_3d_pos):
+        """Phase 2: Lowering gripper closer to object for precise grasping"""
+        base_pose, arm_pos, arm_quat, gripper_pos = self._extract_observations(obs)
+        
+        # Calculate target position with approach height offset, then lower it
+        target_relative_pos = self._calculate_target_relative_pos(
+            obs, target_3d_pos, self.policy.PICK_APPROACH_HEIGHT_OFFSET
+        )
+        
+        # Lower gripper closer to object
+        target_arm_pos = target_relative_pos.copy()
+        target_arm_pos[2] -= self.policy.PICK_LOWER_DIST  # Lower by 8cm
+        target_arm_quat = self._get_gripper_down_quat()
+        target_gripper_pos = np.array([0.0])  # Gripper open
+
+        print(f"TopGrasp: Lowering gripper for precise approach... target: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
+        
+        # Check if positioned correctly
+        phase_complete = np.allclose(arm_pos, target_arm_pos, atol=0.02)  # 2cm tolerance
+        if phase_complete:
+            print("Gripper lowered to grasping position, closing gripper")
+            
+        return target_arm_pos, target_arm_quat, target_gripper_pos, phase_complete
+    
+    def immobilizing(self, obs, target_3d_pos):
+        """Phase 3: Close gripper to grasp object"""
+        base_pose, arm_pos, arm_quat, gripper_pos = self._extract_observations(obs)
+        
+        # Calculate target position with approach height offset, then lower it
+        target_relative_pos = self._calculate_target_relative_pos(
+            obs, target_3d_pos, self.policy.PICK_APPROACH_HEIGHT_OFFSET
+        )
+        
+        # Maintain lowered position and close gripper
+        target_arm_pos = target_relative_pos.copy()
+        target_arm_pos[2] -= self.policy.PICK_LOWER_DIST
+        target_arm_quat = self._get_gripper_down_quat()
+        target_gripper_pos = np.array([1.0])  # Close gripper
+
+        print(f"Immobilizing: Closing gripper... current position: {gripper_pos[0]:.3f}")
+        
+        # Initialize grasp attempt tracking
+        if not hasattr(self.policy, 'grasp_start_time'):
+            self.policy.grasp_start_time = time.time()
+            self.policy.initial_gripper_pos = gripper_pos[0]
+            print(f"Started grasp attempt, initial gripper pos: {self.policy.initial_gripper_pos:.3f}")
+        
+        # Check for successful grasp (multiple criteria)
+        gripper_closed_enough = gripper_pos[0] > self.policy.GRASP_SUCCESS_THRESHOLD
+        gripper_progress = (gripper_pos[0] - self.policy.initial_gripper_pos) > self.policy.GRASP_PROGRESS_THRESHOLD
+        grasp_timeout = (time.time() - self.policy.grasp_start_time) > self.policy.GRASP_TIMEOUT_S
+        
+        phase_complete = gripper_closed_enough or gripper_progress or grasp_timeout
+        if phase_complete:
+            if gripper_closed_enough or gripper_progress:
+                print(f"Grasp successful! Gripper pos: {gripper_pos[0]:.3f}, progress: {gripper_pos[0] - self.policy.initial_gripper_pos:.3f}")
+            else:
+                print(f"Grasp timeout reached, proceeding with current grip: {gripper_pos[0]:.3f}")
+            
+            # Clean up tracking variables
+            if hasattr(self.policy, 'grasp_start_time'):
+                delattr(self.policy, 'grasp_start_time')
+            if hasattr(self.policy, 'initial_gripper_pos'):
+                delattr(self.policy, 'initial_gripper_pos')
+            print("Moving to lift phase!")
+            
+        return target_arm_pos, target_arm_quat, target_gripper_pos, phase_complete
+    
+    def transporting(self, obs, target_3d_pos):
+        """Phase 4: Moving end effector with closed gripper to target pose (lift)"""
+        base_pose, arm_pos, arm_quat, gripper_pos = self._extract_observations(obs)
+        
+        # Calculate target position with approach height offset
+        target_relative_pos = self._calculate_target_relative_pos(
+            obs, target_3d_pos, self.policy.PICK_APPROACH_HEIGHT_OFFSET
+        )
+        
+        # Lift object from the grasping position
+        lifted_pos = target_relative_pos.copy()
+        lifted_pos[2] += (self.policy.PICK_LIFT_DIST - self.policy.PICK_LOWER_DIST)  # Net lift
+        target_arm_pos = lifted_pos
+        target_arm_quat = self._get_gripper_down_quat()
+        target_gripper_pos = np.array([1.0])  # Gripper closed
+
+        print(f"Transporting: Lifting object... target height: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
+        
+        # Check if lifted correctly
+        phase_complete = np.allclose(arm_pos, target_arm_pos, atol=0.05)  # 5cm tolerance
+        if phase_complete:
+            print("Object lifted successfully!")
+            
+        return target_arm_pos, target_arm_quat, target_gripper_pos, phase_complete
+    
+    def releasing(self, obs, target_3d_pos):
+        """Phase 5: Open gripper to release object"""
+        base_pose, arm_pos, arm_quat, gripper_pos = self._extract_observations(obs)
+        
+        # Calculate target position with placement height offset
+        target_relative_pos = self._calculate_target_relative_pos(
+            obs, target_3d_pos, self.policy.PLACE_APPROACH_HEIGHT_OFFSET
+        )
+        
+        # Open gripper to place object
+        target_arm_pos = target_relative_pos  # Maintain arm position
+        target_arm_quat = self._get_gripper_down_quat()
+        target_gripper_pos = np.array([0.0])  # Gripper open
+
+        print(f"Releasing: Opening gripper... current position: {gripper_pos[0]:.3f}")
+        
+        # Check if gripper is open
+        phase_complete = gripper_pos[0] < self.policy.PLACE_SUCCESS_THRESHOLD
+        if phase_complete:
+            print("Object placed successfully! Task complete.")
+            
+        return target_arm_pos, target_arm_quat, target_gripper_pos, phase_complete
+
+
 # Modified Motion Planner Policy with strict 0.55m positioning and sequential base-arm execution
 class MMMPPolicy(BaseAgent):
     # Base following parameters (from BaseController)
@@ -42,17 +225,13 @@ class MMMPPolicy(BaseAgent):
     # Fixed end effector offset - always 0.55m for consistent positioning
     FIXED_END_EFFECTOR_OFFSET = 0.55
 
-    # Base stopping verification parameters
-    BASE_STOP_VELOCITY_THRESHOLD = 0.01  # Consider base stopped if velocity < 1cm/s
-    BASE_STOP_CONFIRMATION_FRAMES = 5    # Confirm base has stopped for 5 consecutive frames
-
     # Grasping parameters
-    GRASP_SUCCESS_THRESHOLD = 0.6
+    GRASP_SUCCESS_THRESHOLD = 0.7
     GRASP_PROGRESS_THRESHOLD = 0.3
     GRASP_TIMEOUT_S = 3.0
     PLACE_SUCCESS_THRESHOLD = 0.2
 
-    def __init__(self):
+    def __init__(self, socketio=None):
         # Motion planning state - following controller.py pattern
         self.state = 'idle'  # States: idle, moving, base_stopping, manipulating
         self.current_command = None
@@ -64,10 +243,6 @@ class MMMPPolicy(BaseAgent):
         # Base following parameters
         self.lookahead_position = None
         
-        # Base stopping verification
-        self.prev_base_poses = []  # Store recent base poses to check if stopped
-        self.base_stop_frames = 0  # Counter for consecutive stopped frames
-        
         # Object and target locations (using ground truth from MuJoCo)
         self.object_location = None
         self.target_location = None
@@ -76,7 +251,55 @@ class MMMPPolicy(BaseAgent):
         self.enabled = True
         self.episode_ended = False
         
+        # Initialize manipulation primitive handler
+        self.manipulate_primitive = ManipulatePrimitive(self)
+        
+        # Socket.IO for web interface updates
+        self.socketio = socketio
+        
         print(f'MMMP policy initialized - base will position at exactly {self.FIXED_END_EFFECTOR_OFFSET}m from target')
+
+    def emit_robot_status(self, obs, current_instruction=""):
+        """Emit robot status to web interface"""
+        if self.socketio is None:
+            return
+            
+        try:
+            base_pose = obs['base_pose']
+            
+            # Safely convert to list if it's a numpy array
+            def safe_to_list(data):
+                if hasattr(data, 'tolist'):
+                    return data.tolist()
+                elif isinstance(data, (list, tuple)):
+                    return list(data)
+                else:
+                    return data
+            
+            # Safely get grasp state string
+            grasp_state_str = 'IDLE'
+            if self.grasp_state is not None:
+                if hasattr(self.grasp_state, 'value'):
+                    grasp_state_str = str(self.grasp_state.value)
+                else:
+                    grasp_state_str = str(self.grasp_state)
+            
+            # Prepare status data
+            status_data = {
+                'target_ee_pos': safe_to_list(self.target_ee_pos) if self.target_ee_pos is not None else [0.0, 0.0],
+                'base_pose': safe_to_list(base_pose),
+                'grasp_state': grasp_state_str,
+                'robot_state': self.state,
+                'instruction': current_instruction,
+                'task_complete': self.episode_ended,
+                'completion_message': 'Object placed successfully! Task complete.' if self.episode_ended else None
+            }
+            
+            # Emit to all connected clients
+            self.socketio.emit('robot_status', status_data)
+            
+        except Exception as e:
+            print(f"Error emitting robot status: {e}")
 
     def reset(self):
         # Reset motion planning state
@@ -88,10 +311,6 @@ class MMMPPolicy(BaseAgent):
         self.lookahead_position = None
         self.episode_ended = False
         self.grasp_state = None
-        
-        # Reset base stopping verification
-        self.prev_base_poses = []
-        self.base_stop_frames = 0
         
         # Clean up any grasp tracking variables
         if hasattr(self, 'grasp_start_time'):
@@ -125,11 +344,16 @@ class MMMPPolicy(BaseAgent):
         # Debug: Print current base pose
         print(f"Current base pose: [{base_pose[0]:.3f}, {base_pose[1]:.3f}, {base_pose[2]:.3f}]")
 
+        # Emit current robot status
+        current_instruction = "Waiting for robot to start..."
+
         # State machine with strict base-arm sequencing
         if self.state == 'idle':
+            current_instruction = "Detecting objects and planning task..."
             # Detect objects and plan new command
             detected_objects = self.detect_objects_from_ground_truth(obs)
             if not detected_objects:
+                self.emit_robot_status(obs, current_instruction)
                 return None
             
             self.object_location = detected_objects[0]
@@ -153,13 +377,6 @@ class MMMPPolicy(BaseAgent):
             # Build base command and start moving
             base_command = self.build_base_command(pick_command)
 
-            # waypoints are [x, y, theta]
-            # waypoints[0] is the current base pose
-            # waypoints[1,:2]  = self.find_base_waypoint(command['waypoints'], target_ee_pos)
-            # waypoints[1,2] = self.find_base_heading(command['waypoints'][0], self.object_location)
-            
-            
-
             print(f"Base command: {base_command}")
             
             if base_command:
@@ -169,292 +386,42 @@ class MMMPPolicy(BaseAgent):
                 self.current_waypoint_idx = 1
                 self.lookahead_position = None
                 self.state = 'moving'
-                self.prev_base_poses = []  # Reset base pose tracking
-                self.base_stop_frames = 0
+                current_instruction = f"Moving base to object at {self.object_location[:2]}"
                 print(f"Starting base movement to object at {self.object_location}")
                 print(f"Base waypoints: {self.base_waypoints}")
                 print(f"Target EE position: {self.target_ee_pos}")
                 print(f"Will position base at exactly {self.FIXED_END_EFFECTOR_OFFSET}m from target")
             else:
+                current_instruction = "Failed to build base command"
                 print("Failed to build base command")
 
                 
         elif self.state == 'moving':
+            current_instruction = f"Moving base to target position..."
             # Execute base movement following waypoints
             action = self.execute_base_movement(obs)
             if action is None:  # Base movement complete
-                print("Base movement complete! Verifying base has stopped...")
-                # Transition to base_stopping state to confirm base has stopped
-                self.state = 'base_stopping'
-                self.prev_base_poses = []
-                self.base_stop_frames = 0
+                print("Base movement complete! Starting arm manipulation...")
+                # Transition directly to manipulating state
+                self.state = 'manipulating'
+                current_instruction = "Base movement complete, starting arm manipulation..."
             else:
                 # Print target base pose from action
                 if action and 'base_pose' in action:
                     target_pose = action['base_pose']
                     print(f"Target base pose: [{target_pose[0]:.3f}, {target_pose[1]:.3f}, {target_pose[2]:.3f}]")
-            return action
             
-        elif self.state == 'base_stopping':
-            # Verify that base has completely stopped before starting arm manipulation
-            current_base_pose = base_pose[:2]  # Only x, y for position tracking
-            
-            # Store recent base poses
-            self.prev_base_poses.append(current_base_pose.copy())
-            if len(self.prev_base_poses) > self.BASE_STOP_CONFIRMATION_FRAMES:
-                self.prev_base_poses.pop(0)
-            
-            # Check if base has stopped moving
-            base_stopped = False
-            if len(self.prev_base_poses) >= self.BASE_STOP_CONFIRMATION_FRAMES:
-                # Calculate velocity over recent frames
-                max_velocity = 0
-                for i in range(1, len(self.prev_base_poses)):
-                    velocity = distance(self.prev_base_poses[i-1], self.prev_base_poses[i])
-                    max_velocity = max(max_velocity, velocity)
-                
-                if max_velocity < self.BASE_STOP_VELOCITY_THRESHOLD:
-                    self.base_stop_frames += 1
-                    print(f"Base stopping verification: frame {self.base_stop_frames}/{self.BASE_STOP_CONFIRMATION_FRAMES}, max_vel: {max_velocity:.4f}")
-                else:
-                    self.base_stop_frames = 0  # Reset if base is still moving
-                    print(f"Base still moving, max velocity: {max_velocity:.4f}")
-                
-                if self.base_stop_frames >= self.BASE_STOP_CONFIRMATION_FRAMES:
-                    base_stopped = True
-            
-            if base_stopped:
-                # Verify we're at correct distance from target
-                if self.target_ee_pos is not None:
-                    distance_to_target = distance(base_pose[:2], self.target_ee_pos)
-                    distance_error = abs(distance_to_target - self.FIXED_END_EFFECTOR_OFFSET)
-                    print(f"Base stopped! Distance to target: {distance_to_target:.3f}m, target: {self.FIXED_END_EFFECTOR_OFFSET}m, error: {distance_error:.4f}m")
-                    
-                    if self.current_command['primitive_name'] == 'pick':
-                        tolerance = self.GRASP_BASE_TOLERANCE
-                    else:
-                        tolerance = self.PLACE_BASE_TOLERANCE
-                        
-                    if distance_error < tolerance:
-                        self.state = 'manipulating'
-                        print("Base properly positioned and stopped! Starting arm manipulation")
-                    else:
-                        print(f'Base stopped but not at correct distance (error: {distance_error*100:.1f}cm > {tolerance*100:.1f}cm)')
-                        self.state = 'idle'
-                else:
-                    self.state = 'idle'
-            
-            # Hold current pose while verifying base has stopped
-            action = {
-                'base_pose': base_pose.copy(),
-                'arm_pos': arm_pos.copy(),
-                'arm_quat': arm_quat.copy(),
-                'gripper_pos': gripper_pos.copy(),
-            }
+            self.emit_robot_status(obs, current_instruction)
             return action
             
         elif self.state == 'manipulating':
-            # Execute arm manipulation (same logic as original)
-            if self.current_command['primitive_name'] == 'pick':
-                if self.grasp_state is None:
-                    self.grasp_state = PickState.APPROACH
+            # Execute arm manipulation using ManipulatePrimitive
+            action = self.execute_manipulation(obs)
+            # Status will be emitted within execute_manipulation method
+            return action
 
-                # Define default targets to hold current pose
-                target_arm_pos = arm_pos.copy()
-                target_arm_quat = arm_quat.copy()
-                target_gripper_pos = gripper_pos.copy()
-
-                # Position arm above object and close gripper to grasp
-                object_3d_pos = self.current_command['object_3d_pos']
-                # Calculate global position difference with better approach height
-                global_diff = np.array([
-                    object_3d_pos[0] - base_pose[0],
-                    object_3d_pos[1] - base_pose[1], 
-                    object_3d_pos[2] + self.PICK_APPROACH_HEIGHT_OFFSET - self.ROBOT_BASE_HEIGHT
-                ])
-                
-                # Transform to base's local coordinate frame (account for base rotation)
-                base_angle = base_pose[2]
-                cos_angle = math.cos(-base_angle)  # Negative for inverse rotation
-                sin_angle = math.sin(-base_angle)
-                
-                object_relative_pos = np.array([
-                    cos_angle * global_diff[0] - sin_angle * global_diff[1],
-                    sin_angle * global_diff[0] + cos_angle * global_diff[1],
-                    global_diff[2]  # Z component unchanged
-                ])
-                print(f"Arm manipulation: global_diff = {global_diff}")
-                
-                print(f"Base angle: {base_pose[2]:.3f} rad ({math.degrees(base_pose[2]):.1f} deg)")
-                print(f"Object global pos: {self.current_command.get('object_3d_pos', 'N/A')}")
-                
-                print(f"Current arm pos: {arm_pos}")
-                print(f"Position error: {np.linalg.norm(arm_pos - object_relative_pos):.4f}m")
-                print(f"Grasp state: {self.grasp_state}")
-                
-                if self.grasp_state == PickState.APPROACH:
-                    # Step 1: Position arm well above object with open gripper (safe approach)
-                    target_arm_pos = object_relative_pos
-                    target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
-                    target_gripper_pos = np.array([0.0])  # Gripper open
-
-                    print(f"Step 1: Positioning arm above object with open gripper")
-                    if np.allclose(arm_pos, target_arm_pos, atol=0.03):  # Tighter tolerance: 3cm
-                        self.grasp_state = PickState.LOWER
-                        print("Arm positioned above object, moving to lower approach")
-                
-                elif self.grasp_state == PickState.LOWER:
-                    # Step 2: Lower gripper closer to object for precise grasping
-                    target_arm_pos = object_relative_pos.copy()
-                    target_arm_pos[2] -= self.PICK_LOWER_DIST  # Lower by 8cm for closer approach
-                    target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
-                    target_gripper_pos = np.array([0.0])  # Gripper open
-
-                    print(f"Step 2: Lowering gripper for precise approach... target: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
-                    if np.allclose(arm_pos, target_arm_pos, atol=0.02):  # Very tight tolerance: 2cm
-                        self.grasp_state = PickState.GRASP
-                        print("Gripper lowered to grasping position, closing gripper")
-                
-                elif self.grasp_state == PickState.GRASP:
-                    # Step 3: Close gripper to grasp
-                    target_arm_pos = object_relative_pos.copy()
-                    target_arm_pos[2] -= self.PICK_LOWER_DIST  # Maintain lowered position
-                    target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
-                    target_gripper_pos = np.array([1.0])  # Close gripper
-
-                    print(f"Step 3: Closing gripper... current position: {gripper_pos[0]:.3f}")
-                    
-                    # Initialize grasp attempt tracking
-                    if not hasattr(self, 'grasp_start_time'):
-                        self.grasp_start_time = time.time()
-                        self.initial_gripper_pos = gripper_pos[0]
-                        print(f"Started grasp attempt, initial gripper pos: {self.initial_gripper_pos:.3f}")
-                    
-                    # Check for successful grasp (multiple criteria)
-                    gripper_closed_enough = gripper_pos[0] > self.GRASP_SUCCESS_THRESHOLD
-                    gripper_progress = (gripper_pos[0] - self.initial_gripper_pos) > self.GRASP_PROGRESS_THRESHOLD
-                    grasp_timeout = (time.time() - self.grasp_start_time) > self.GRASP_TIMEOUT_S
-                    
-                    if gripper_closed_enough or gripper_progress or grasp_timeout:
-                        if gripper_closed_enough or gripper_progress:
-                            print(f"Grasp successful! Gripper pos: {gripper_pos[0]:.3f}, progress: {gripper_pos[0] - self.initial_gripper_pos:.3f}")
-                        else:
-                            print(f"Grasp timeout reached, proceeding with current grip: {gripper_pos[0]:.3f}")
-                        
-                        self.grasp_state = PickState.LIFT
-                        # Clean up tracking variables
-                        delattr(self, 'grasp_start_time')
-                        delattr(self, 'initial_gripper_pos')
-                        print("Moving to lift phase!")
-                
-                elif self.grasp_state == PickState.LIFT:
-                    # Step 4: Lift object from the grasping position
-                    lifted_pos = object_relative_pos.copy()
-                    lifted_pos[2] += (self.PICK_LIFT_DIST - self.PICK_LOWER_DIST) # Net lift
-                    target_arm_pos = lifted_pos
-                    target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
-                    target_gripper_pos = np.array([1.0])  # Gripper closed
-
-                    print(f"Step 4: Lifting object... target height: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
-                    if np.allclose(arm_pos, target_arm_pos, atol=0.05):  # 5cm tolerance
-                        print("Object lifted successfully! Now moving to placement location.")
-                        # Create place command
-                        place_command = {
-                            'primitive_name': 'place',
-                            'waypoints': [base_pose[:2].tolist(), self.target_location[:2].tolist()],
-                            'target_3d_pos': self.target_location.copy()
-                        }
-                        
-                        base_command = self.build_base_command(place_command)
-                        if base_command:
-                            self.current_command = place_command
-                            self.base_waypoints = base_command['waypoints']
-                            self.target_ee_pos = base_command['target_ee_pos']
-                            self.current_waypoint_idx = 1
-                            self.lookahead_position = None
-                            self.state = 'moving'
-                            self.grasp_state = None  # Reset for next manipulation
-                            self.prev_base_poses = []  # Reset base tracking
-                            self.base_stop_frames = 0
-                            print(f"Starting base movement to placement location at {self.target_location}")
-                        else:
-                            print("Failed to build place command")
-                            self.episode_ended = True
-                            self.state = 'idle'
-
-                # Create action from targets (hold base pose steady during arm manipulation)
-                action = {
-                    'base_pose': base_pose.copy(),  # Keep base stationary
-                    'arm_pos': target_arm_pos,
-                    'arm_quat': target_arm_quat,
-                    'gripper_pos': target_gripper_pos,
-                }
-                return action
-
-            elif self.current_command['primitive_name'] == 'place':
-                if self.grasp_state is None:
-                    self.grasp_state = PlaceState.APPROACH
-
-                # Define default targets to hold current pose
-                target_arm_pos = arm_pos.copy()
-                target_arm_quat = arm_quat.copy()
-                target_gripper_pos = gripper_pos.copy()
-
-                # Position arm above placement location and open gripper
-                target_3d_pos = self.current_command['target_3d_pos']
-                # Calculate global position difference
-                global_diff = np.array([
-                    target_3d_pos[0] - base_pose[0],
-                    target_3d_pos[1] - base_pose[1], 
-                    target_3d_pos[2] + self.PLACE_APPROACH_HEIGHT_OFFSET - self.ROBOT_BASE_HEIGHT
-                ])
-                
-                # Transform to base's local coordinate frame (account for base rotation)
-                base_angle = base_pose[2]
-                cos_angle = math.cos(-base_angle)  # Negative for inverse rotation
-                sin_angle = math.sin(-base_angle)
-                
-                target_relative_pos = np.array([
-                    cos_angle * global_diff[0] - sin_angle * global_diff[1],
-                    sin_angle * global_diff[0] + cos_angle * global_diff[1],
-                    global_diff[2]  # Z component unchanged
-                ])
-                
-                print(f"Placing: target_relative_pos = {target_relative_pos}")
-                print(f"Target EE pos: {self.target_ee_pos}, Base pose: {base_pose}")
-                print(f"Grasp state: {self.grasp_state}")
-                
-                if self.grasp_state == PlaceState.APPROACH:
-                    # Step 1: Position arm above placement location with closed gripper
-                    target_arm_pos = target_relative_pos
-                    target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
-                    target_gripper_pos = np.array([1.0])  # Gripper closed
-
-                    print(f"Step 1: Positioning arm above placement location with closed gripper")
-                    if np.allclose(arm_pos, target_arm_pos, atol=0.05):  # 5cm tolerance
-                        self.grasp_state = PlaceState.RELEASE
-                        print("Arm positioned above placement location, opening gripper")
-                
-                elif self.grasp_state == PlaceState.RELEASE:
-                    # Step 2: Open gripper to place object
-                    target_arm_pos = target_relative_pos  # Maintain arm position
-                    target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
-                    target_gripper_pos = np.array([0.0])  # Gripper open
-
-                    print(f"Step 2: Opening gripper... current position: {gripper_pos[0]:.3f}")
-                    if gripper_pos[0] < self.PLACE_SUCCESS_THRESHOLD:
-                        print("Object placed successfully! Task complete.")
-                        self.episode_ended = True  # End the episode
-                        self.state = 'idle'
-                
-                # Create action from targets (hold base pose steady during arm manipulation)
-                action = {
-                    'base_pose': base_pose.copy(),  # Keep base stationary
-                    'arm_pos': target_arm_pos,
-                    'arm_quat': target_arm_quat,
-                    'gripper_pos': target_gripper_pos,
-                }
-                return action
+        # Emit status for idle and other states
+        self.emit_robot_status(obs, current_instruction)
 
         # Default: hold current pose
         action = {
@@ -464,6 +431,120 @@ class MMMPPolicy(BaseAgent):
             'gripper_pos': gripper_pos.copy(),
         }
         print(f"Default action - holding current pose")
+        return action
+
+    def execute_manipulation(self, obs):
+        """Execute arm manipulation using ManipulatePrimitive class"""
+        base_pose = obs['base_pose']
+        arm_pos = obs['arm_pos']
+        arm_quat = obs['arm_quat']
+        gripper_pos = obs['gripper_pos']
+        
+        current_instruction = "Unknown manipulation state"
+        
+        # Initialize target variables to current state as defaults
+        target_arm_pos = arm_pos.copy()
+        target_arm_quat = arm_quat.copy()
+        target_gripper_pos = gripper_pos.copy()
+        
+        if self.current_command['primitive_name'] == 'pick':
+            if self.grasp_state is None:
+                self.grasp_state = PickState.APPROACH
+
+            object_3d_pos = self.current_command['object_3d_pos']
+            
+            print(f"Arm manipulation: Base angle: {base_pose[2]:.3f} rad ({math.degrees(base_pose[2]):.1f} deg)")
+            print(f"Object global pos: {object_3d_pos}")
+            print(f"Current arm pos: {arm_pos}")
+            print(f"Grasp state: {self.grasp_state}")
+            
+            if self.grasp_state == PickState.APPROACH:
+                current_instruction = "Approaching: Positioning arm above object with open gripper"
+                target_arm_pos, target_arm_quat, target_gripper_pos, phase_complete = \
+                    self.manipulate_primitive.approaching(obs, object_3d_pos)
+                if phase_complete:
+                    self.grasp_state = PickState.LOWER
+                    
+            elif self.grasp_state == PickState.LOWER:
+                current_instruction = "TopGrasp: Lowering gripper for precise approach"
+                target_arm_pos, target_arm_quat, target_gripper_pos, phase_complete = \
+                    self.manipulate_primitive.topgrasp(obs, object_3d_pos)
+                if phase_complete:
+                    self.grasp_state = PickState.GRASP
+                    
+            elif self.grasp_state == PickState.GRASP:
+                current_instruction = f"Immobilizing: Closing gripper... current position: {gripper_pos[0]:.3f}"
+                target_arm_pos, target_arm_quat, target_gripper_pos, phase_complete = \
+                    self.manipulate_primitive.immobilizing(obs, object_3d_pos)
+                if phase_complete:
+                    self.grasp_state = PickState.LIFT
+                    
+            elif self.grasp_state == PickState.LIFT:
+                target_arm_pos, target_arm_quat, target_gripper_pos, phase_complete = \
+                    self.manipulate_primitive.transporting(obs, object_3d_pos)
+                current_instruction = f"Transporting: Lifting object... target height: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}"
+                if phase_complete:
+                    print("Object lifted successfully! Now moving to placement location.")
+                    current_instruction = "Object lifted successfully! Moving to placement location."
+                    # Create place command
+                    place_command = {
+                        'primitive_name': 'place',
+                        'waypoints': [base_pose[:2].tolist(), self.target_location[:2].tolist()],
+                        'target_3d_pos': self.target_location.copy()
+                    }
+                    
+                    base_command = self.build_base_command(place_command)
+                    if base_command:
+                        self.current_command = place_command
+                        self.base_waypoints = base_command['waypoints']
+                        self.target_ee_pos = base_command['target_ee_pos']
+                        self.current_waypoint_idx = 1
+                        self.lookahead_position = None
+                        self.state = 'moving'
+                        self.grasp_state = None  # Reset for next manipulation
+                        print(f"Starting base movement to placement location at {self.target_location}")
+                    else:
+                        print("Failed to build place command")
+                        self.episode_ended = True
+                        self.state = 'idle'
+                        current_instruction = "Failed to build place command - task ended"
+
+        elif self.current_command['primitive_name'] == 'place':
+            if self.grasp_state is None:
+                self.grasp_state = PlaceState.APPROACH
+
+            target_3d_pos = self.current_command['target_3d_pos']
+            
+            print(f"Placing: Target EE pos: {self.target_ee_pos}, Base pose: {base_pose}")
+            print(f"Grasp state: {self.grasp_state}")
+            
+            if self.grasp_state == PlaceState.APPROACH:
+                current_instruction = "Approaching placement location with closed gripper"
+                target_arm_pos, target_arm_quat, target_gripper_pos, phase_complete = \
+                    self.manipulate_primitive.approaching(obs, target_3d_pos)
+                if phase_complete:
+                    self.grasp_state = PlaceState.RELEASE
+                    print("Arm positioned above placement location, opening gripper")
+                    
+            elif self.grasp_state == PlaceState.RELEASE:
+                current_instruction = f"Releasing: Opening gripper... current position: {gripper_pos[0]:.3f}"
+                target_arm_pos, target_arm_quat, target_gripper_pos, phase_complete = \
+                    self.manipulate_primitive.releasing(obs, target_3d_pos)
+                if phase_complete:
+                    self.episode_ended = True  # End the episode
+                    self.state = 'idle'
+                    current_instruction = "Object placed successfully! Task complete."
+        
+        # Emit robot status with current instruction
+        self.emit_robot_status(obs, current_instruction)
+        
+        # Create action from targets (hold base pose steady during arm manipulation)
+        action = {
+            'base_pose': base_pose.copy(),  # Keep base stationary
+            'arm_pos': target_arm_pos,
+            'arm_quat': target_arm_quat,
+            'gripper_pos': target_gripper_pos,
+        }
         return action
 
     def execute_base_movement(self, obs):
