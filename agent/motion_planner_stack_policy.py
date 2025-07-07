@@ -36,7 +36,7 @@ class MotionPlannerPolicyStack(BaseAgent):
     # Manipulation parameters
     ROBOT_BASE_HEIGHT = 0.48
     PICK_APPROACH_HEIGHT_OFFSET = 0.25
-    PICK_LOWER_DIST = 0.08
+    PICK_LOWER_DIST = 0.09
     PICK_LIFT_DIST = 0.28  # Net lift is (PICK_LIFT_DIST - PICK_LOWER_DIST)
     PLACE_APPROACH_HEIGHT_OFFSET = 0.10
 
@@ -44,7 +44,7 @@ class MotionPlannerPolicyStack(BaseAgent):
     GRASP_SUCCESS_THRESHOLD = 0.65
     GRASP_PROGRESS_THRESHOLD = 0.3
     GRASP_TIMEOUT_S = 3.0
-    PLACE_SUCCESS_THRESHOLD = 0.2
+    PLACE_SUCCESS_THRESHOLD = 0.05
     GRASP_FAILURE_THRESHOLD = 0.95  # Gripper position above which grasp is considered failed after lift
     MAX_GRASP_RETRIES = 3
 
@@ -451,8 +451,8 @@ class MotionPlannerPolicyStack(BaseAgent):
 
                     print(f"Step 2: Lowering to final placement position (10cm above target cube)")
                     print(f"Target arm pos: {target_arm_pos}, Current arm pos: {arm_pos}")
-                    print(f"Position error: {np.linalg.norm(arm_pos[:2] - target_arm_pos[:2]):.4f}m")
-                    if np.allclose(arm_pos[:2], target_arm_pos[:2], atol=0.01):  # 1cm tolerance for precise placement
+                    print(f"Position error: {np.linalg.norm(arm_pos[:3] - target_arm_pos[:3]):.4f}m")
+                    if np.allclose(arm_pos[:3], target_arm_pos[:3], atol=0.01):  # 1cm tolerance for precise placement
                         self.grasp_state = PlaceState.RELEASE
                         print("Arm positioned at final placement height, opening gripper")
                 
@@ -477,7 +477,7 @@ class MotionPlannerPolicyStack(BaseAgent):
 
                     print(f"Step 4: Lifting arm away from stacked cubes... target height: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
                     print(f"Position error: {np.linalg.norm(arm_pos - target_arm_pos):.4f}m")
-                    if np.allclose(arm_pos, target_arm_pos, atol=0.03):  # 3cm tolerance (reduced from 5cm)
+                    if np.allclose(arm_pos[:3], target_arm_pos[:3], atol=0.03):  # 3cm tolerance (reduced from 5cm)
                         print("Arm lifted away successfully! Task complete.")
                         self.episode_ended = True  # End the episode
                         self.state = 'idle'
