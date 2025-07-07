@@ -45,6 +45,8 @@ class MotionPlannerPolicyStack(BaseAgent):
     GRASP_PROGRESS_THRESHOLD = 0.3
     GRASP_TIMEOUT_S = 3.0
     PLACE_SUCCESS_THRESHOLD = 0.2
+    GRASP_FAILURE_THRESHOLD = 0.95  # Gripper position above which grasp is considered failed after lift
+    MAX_GRASP_RETRIES = 3
 
     def __init__(self):
         # Motion planning state - following controller.py pattern
@@ -54,6 +56,8 @@ class MotionPlannerPolicyStack(BaseAgent):
         self.current_waypoint_idx = 0
         self.target_ee_pos = None
         self.grasp_state = None  # Replaces grasp_step
+        self.base_movement_retries = 0
+        self.grasp_retries = 0
         
         # Base following parameters
         self.lookahead_position = None
@@ -79,6 +83,8 @@ class MotionPlannerPolicyStack(BaseAgent):
         self.lookahead_position = None
         self.episode_ended = False
         self.grasp_state = None
+        self.base_movement_retries = 0
+        self.grasp_retries = 0
         
         # Reset cube locations
         self.source_cube_location = None
@@ -150,6 +156,8 @@ class MotionPlannerPolicyStack(BaseAgent):
                     self.current_waypoint_idx = 1
                     self.lookahead_position = None
                     self.state = 'moving'
+                    self.base_movement_retries = 0
+                    self.grasp_retries = 0
                     print(f"Starting base movement to source cube at {self.source_cube_location}")
                     print(f"Base waypoints: {self.base_waypoints}")
                     print(f"Target EE position: {self.target_ee_pos}")
@@ -178,8 +186,27 @@ class MotionPlannerPolicyStack(BaseAgent):
                         self.state = 'manipulating'
                         print("Base reached target, starting arm manipulation")
                     else:
-                        print(f'Too far from target end effector position ({(100 * diff):.1f} cm)')
-                        self.state = 'idle'
+                        if self.base_movement_retries < 3:
+                            self.base_movement_retries += 1
+                            print(f'Too far from target end effector position ({(100 * diff):.1f} cm). Retrying, attempt {self.base_movement_retries}/3.')
+                            
+                            # Rebuild base command from current pose
+                            self.current_command['waypoints'][0] = base_pose[:2].tolist()
+                            base_command = self.build_base_command(self.current_command)
+                            
+                            if base_command:
+                                self.base_waypoints = base_command['waypoints']
+                                self.target_ee_pos = base_command['target_ee_pos']
+                                self.current_waypoint_idx = 1
+                                self.lookahead_position = None
+                                # Stay in 'moving' state to execute new path
+                                print(f"Restarting base movement. New waypoints: {self.base_waypoints}")
+                            else:
+                                print("Failed to build base command for retry.")
+                                self.state = 'idle'
+                        else:
+                            print(f'Too far from target end effector position ({(100 * diff):.1f} cm) after 3 retries.')
+                            self.state = 'idle'
                 else:
                     self.state = 'idle'
             else:
@@ -293,28 +320,41 @@ class MotionPlannerPolicyStack(BaseAgent):
 
                     print(f"Step 4: Lifting object... target height: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
                     if np.allclose(arm_pos, target_arm_pos, atol=0.05):  # 5cm tolerance
-                        print("Object lifted successfully! Now moving to stack location on target cube.")
-                        # Create place command for stacking
-                        place_command = {
-                            'primitive_name': 'place',
-                            'waypoints': [base_pose[:2].tolist(), self.stack_location[:2].tolist()],
-                            'target_3d_pos': self.stack_location.copy()
-                        }
-                        
-                        base_command = self.build_base_command(place_command)
-                        if base_command:
-                            self.current_command = place_command
-                            self.base_waypoints = base_command['waypoints']
-                            self.target_ee_pos = base_command['target_ee_pos']
-                            self.current_waypoint_idx = 1
-                            self.lookahead_position = None
-                            self.state = 'moving'
-                            self.grasp_state = None  # Reset for next manipulation
-                            print(f"Starting base movement to stack location at {self.stack_location}")
+                        # Check for grasp failure after lifting
+                        if gripper_pos[0] > self.GRASP_FAILURE_THRESHOLD:
+                            if self.grasp_retries < self.MAX_GRASP_RETRIES:
+                                self.grasp_retries += 1
+                                print(f"Grasp failed after lift (gripper pos: {gripper_pos[0]:.3f}). Retrying grasp, attempt {self.grasp_retries}/{self.MAX_GRASP_RETRIES}.")
+                                self.grasp_state = PickState.APPROACH
+                            else:
+                                print(f"Grasp failed after {self.MAX_GRASP_RETRIES} retries. Aborting.")
+                                self.episode_ended = True
+                                self.state = 'idle'
                         else:
-                            print("Failed to build place command")
-                            self.episode_ended = True
-                            self.state = 'idle'
+                            print("Object lifted successfully! Now moving to stack location on target cube.")
+                            self.grasp_retries = 0 # Reset for next pick
+                            # Create place command for stacking
+                            place_command = {
+                                'primitive_name': 'place',
+                                'waypoints': [base_pose[:2].tolist(), self.stack_location[:2].tolist()],
+                                'target_3d_pos': self.stack_location.copy()
+                            }
+                            
+                            base_command = self.build_base_command(place_command)
+                            if base_command:
+                                self.current_command = place_command
+                                self.base_waypoints = base_command['waypoints']
+                                self.target_ee_pos = base_command['target_ee_pos']
+                                self.current_waypoint_idx = 1
+                                self.lookahead_position = None
+                                self.state = 'moving'
+                                self.base_movement_retries = 0
+                                self.grasp_state = None  # Reset for next manipulation
+                                print(f"Starting base movement to stack location at {self.stack_location}")
+                            else:
+                                print("Failed to build place command")
+                                self.episode_ended = True
+                                self.state = 'idle'
 
                 # Create action from targets
                 action = {
