@@ -13,6 +13,7 @@ from agent.go_to_cabinet_handle_policy import GoToCabinetHandlePolicy
 from agent.go_to_cabinet_handle_policy_right import GoToCabinetHandlePolicyRight
 from agent.mmmp_policy import MMMPPolicy
 from agent.motion_planner_stack_policy import MotionPlannerPolicyStack
+from agent.motion_planner_stack_policy_top import MotionPlannerPolicyStackTop
 
 def run_episode(env, policy):
     # Reset the env
@@ -140,6 +141,8 @@ def main(args):
         policy = GoToCabinetHandlePolicyRight()
     elif args.motion_planner:
         policy = MotionPlannerPolicy()
+    elif args.motion_planner_stack_top:
+        policy = MotionPlannerPolicyStackTop()
     elif args.motion_planner_stack:
         policy = MotionPlannerPolicyStack()
     elif args.mmmp:
@@ -186,6 +189,7 @@ if __name__ == '__main__':
     parser.add_argument('--teleop', action='store_true')
     parser.add_argument('--motion_planner', action='store_true')
     parser.add_argument('--motion_planner_stack', action='store_true', help='Stack cubes by picking the smallest x value cube and placing it on the largest x value cube')
+    parser.add_argument('--motion_planner_stack_top', action='store_true', help='Stack cubes by picking the smallest x value cube and placing it on the largest x value cube')
     parser.add_argument('--mmmp', action='store_true', help='Move gripper to left cabinet handle pose')
     parser.add_argument('--goto-cabinet-handle', action='store_true', help='Move gripper to left cabinet handle pose')
     parser.add_argument('--goto-cabinet-handle-right', action='store_true', help='Move gripper to right cabinet handle pose')
