@@ -28,7 +28,7 @@ class MotionPlannerPolicyStack(BaseAgent):
     POSITION_TOLERANCE = 0.005  # 0.5 cm (reduced from 1.5 cm)
     HEADING_TOLERANCE = math.radians(2.1)  # 2.1 degrees
     GRASP_BASE_TOLERANCE = 0.002  # 0.2 cm for grasp
-    PLACE_BASE_TOLERANCE = 0.01   # 1.0 cm for placement (example, adjust as needed)
+    PLACE_BASE_TOLERANCE = 0.005   # 0.5 cm for placement (example, adjust as needed)
     
     # Stacking parameters
     STACK_HEIGHT_OFFSET = 0.10  # 10cm above the target cube for stacking
@@ -398,8 +398,8 @@ class MotionPlannerPolicyStack(BaseAgent):
 
                     print(f"Step 1: Moving to safe approach position (20cm above target cube)")
                     print(f"Target arm pos: {target_arm_pos}, Current arm pos: {arm_pos}")
-                    print(f"Position error: {np.linalg.norm(arm_pos - target_arm_pos):.4f}m")
-                    if np.allclose(arm_pos, target_arm_pos, atol=0.04):  # 4cm tolerance for approach
+                    print(f"Position error: {np.linalg.norm(arm_pos[:2] - target_arm_pos[:2]):.4f}m")
+                    if np.allclose(arm_pos[:2], target_arm_pos[:2], atol=0.02):  # 2cm tolerance for approach
                         self.grasp_state = PlaceState.LOWER_TO_PLACE
                         print("Reached safe approach position, now lowering to placement height")
                 
@@ -411,8 +411,8 @@ class MotionPlannerPolicyStack(BaseAgent):
 
                     print(f"Step 2: Lowering to final placement position (10cm above target cube)")
                     print(f"Target arm pos: {target_arm_pos}, Current arm pos: {arm_pos}")
-                    print(f"Position error: {np.linalg.norm(arm_pos - target_arm_pos):.4f}m")
-                    if np.allclose(arm_pos, target_arm_pos, atol=0.01):  # 1cm tolerance for precise placement
+                    print(f"Position error: {np.linalg.norm(arm_pos[:2] - target_arm_pos[:2]):.4f}m")
+                    if np.allclose(arm_pos[:2], target_arm_pos[:2], atol=0.01):  # 1cm tolerance for precise placement
                         self.grasp_state = PlaceState.RELEASE
                         print("Arm positioned at final placement height, opening gripper")
                 

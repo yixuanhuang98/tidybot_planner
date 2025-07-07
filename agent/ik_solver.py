@@ -39,7 +39,7 @@ class IKSolver:
         self.damping = DAMPING_COEFF * np.eye(6)
         self.eye = np.eye(self.model.nv)
 
-    def solve(self, pos, quat, curr_qpos, max_iters=20, err_thresh=1e-4):
+    def solve(self, pos, quat, curr_qpos, max_iters=20, err_thresh=1e-5):
         quat = quat[[3, 0, 1, 2]]  # (x, y, z, w) -> (w, x, y, z)
 
         # Set arm to initial joint configuration
