@@ -7,7 +7,7 @@ from itertools import count
 from constants import POLICY_CONTROL_PERIOD
 from episode_storage import EpisodeWriter
 from policies import TeleopPolicy, RemotePolicy, MotionPlannerPolicy
-from policies import MotionPlannerPolicyStackTopWrapper, MotionPlannerPolicyStackWrapper
+from policies import MotionPlannerPolicyStackWrapper
 from policies import MotionPlannerPolicyStackThreeWrapper
 
 def should_save_episode(writer):
@@ -97,8 +97,6 @@ def main(args):
     # Create policy
     if args.stack_policy_three:
         policy = MotionPlannerPolicyStackThreeWrapper()
-    elif args.stack_policy_top:
-        policy = MotionPlannerPolicyStackTopWrapper()
     elif args.stack_policy:
         policy = MotionPlannerPolicyStackWrapper()
     elif args.motion_planner:
@@ -121,7 +119,6 @@ if __name__ == '__main__':
     parser.add_argument('--teleop', action='store_true')
     parser.add_argument('--motion_planner', action='store_true')
     parser.add_argument('--stack_policy', action='store_true', help='Enable stacking policy (stack cubes)')
-    parser.add_argument('--stack_policy_top', action='store_true', help='Enable stacking policy (stack cubes)')
     parser.add_argument('--stack_policy_three', action='store_true', help='Enable stacking policy (stack three cubes)')
     parser.add_argument('--save', action='store_true')
     parser.add_argument('--output-dir', default='data/demos')

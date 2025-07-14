@@ -16,7 +16,6 @@ from scipy.spatial.transform import Rotation as R
 from constants import POLICY_SERVER_HOST, POLICY_SERVER_PORT, POLICY_IMAGE_WIDTH, POLICY_IMAGE_HEIGHT
 from enum import Enum, auto
 from agent.stack_policies import MotionPlannerPolicyStack  # <-- Add this import
-from agent.motion_planner_policy_stack_top import MotionPlannerPolicyStackTop
 
 class Policy:
     def reset(self):
@@ -919,16 +918,6 @@ class MotionPlannerPolicy(Policy):
 class MotionPlannerPolicyStackWrapper(Policy):
     def __init__(self):
         self.impl = MotionPlannerPolicyStack()
-    def reset(self):
-        self.impl.reset()
-    def step(self, obs):
-        return self.impl.step(obs)
-
-
-# Stacking motion planner policy (stacking three objects)
-class MotionPlannerPolicyStackTopWrapper(Policy):
-    def __init__(self):
-        self.impl = MotionPlannerPolicyStackTop()
     def reset(self):
         self.impl.reset()
     def step(self, obs):
