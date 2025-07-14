@@ -239,8 +239,22 @@ class BlocksEnv(AbstractMujocoEnv):
             render_every_n_frames=render_every_n_frames
         )
 
+
+class TableBlocksEnv(AbstractMujocoEnv):
+    """Environment for table-based block manipulation tasks"""
+    
+    def __init__(self, show_viewer: bool = False, render_images: bool = False,
+                 max_episode_steps: int = 1000, render_every_n_frames: int = 1):
+        super().__init__(
+            mjcf_path="env/assets/stanford_tidybot/blocks_table_scene.xml",
+            show_viewer=show_viewer,
+            render_images=render_images,
+            max_episode_steps=max_episode_steps,
+            render_every_n_frames=render_every_n_frames
+        )
+
     def _setup_spaces(self):
-        """Set up observation and action spaces for blocks environment"""
+        """Set up observation and action spaces for table blocks environment"""
         # Action space: base pose (3), arm pose (3), arm quat (4), gripper (1)
         self._action_space = Box(
             low=np.array([-2.0, -2.0, -np.pi, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 0.0]),
@@ -248,7 +262,7 @@ class BlocksEnv(AbstractMujocoEnv):
             dtype=np.float32
         )
         
-        # Observation space: robot state + cube states
+        # Observation space: robot state + cube states (same as BlocksEnv)
         obs_dict = {
             'base_pose': Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
             'arm_pos': Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
@@ -264,10 +278,10 @@ class BlocksEnv(AbstractMujocoEnv):
         self._observation_space = DictSpace(obs_dict)
 
     def _get_scene_specific_observation(self, states: Dict[str, Any]) -> Dict[str, Any]:
-        """Get cube observations"""
+        """Get cube observations for table environment"""
         observation = {}
         
-        # Cube observations
+        # Cube observations (same logic as BlocksEnv)
         for obj_name in ['cube1', 'cube2', 'cube3']:
             if f'{obj_name}_pos' in states:
                 observation[f'{obj_name}_pos'] = states[f'{obj_name}_pos'].astype(np.float32)
@@ -282,48 +296,69 @@ class BlocksEnv(AbstractMujocoEnv):
         return observation
 
     def _get_scene_specific_reward(self, states: Dict[str, Any]) -> float:
-        """Calculate reward for block manipulation"""
+        """Calculate reward for table block manipulation"""
         reward = 0.0
         
-        # Reward for keeping arm in reasonable workspace
+        # Reward for keeping arm in reasonable workspace above table
         arm_pos = states['arm_pos']
-        workspace_center = np.array([0.55, 0.0, 0.4])
-        arm_distance = np.linalg.norm(arm_pos - workspace_center)
-        if arm_distance < 0.5:
+        table_workspace_center = np.array([0.55, 0.0, 0.5])  # Adjusted for table height
+        arm_distance = np.linalg.norm(arm_pos - table_workspace_center)
+        if arm_distance < 0.6:  # Slightly larger workspace for table
             reward += 0.1
         
-        # Reward for cube stacking (example task)
+        # Reward for cube stacking on table
         cube1_pos = states.get('cube1_pos', np.zeros(3))
         cube2_pos = states.get('cube2_pos', np.zeros(3))
         cube3_pos = states.get('cube3_pos', np.zeros(3))
         
-        # Reward for vertical stacking
-        if abs(cube1_pos[0] - cube2_pos[0]) < 0.05 and abs(cube1_pos[1] - cube2_pos[1]) < 0.05:
-            height_diff = abs(cube2_pos[2] - cube1_pos[2])
-            if 0.05 < height_diff < 0.15:  # Proper stacking height
-                reward += 1.0
+        # Check if any cubes are stacked (adjusted heights for table environment)
+        cube_pairs = [(cube1_pos, cube2_pos), (cube1_pos, cube3_pos), (cube2_pos, cube3_pos)]
+        for pos1, pos2 in cube_pairs:
+            if np.linalg.norm(pos1[:2] - pos2[:2]) < 0.05:  # Horizontal alignment
+                height_diff = abs(pos2[2] - pos1[2])
+                if 0.03 < height_diff < 0.08:  # Proper stacking height for table cubes
+                    reward += 2.0  # Higher reward for successful table stacking
         
         return reward
 
     def _get_scene_specific_success(self, states: Dict[str, Any]) -> bool:
-        """Check if blocks are successfully stacked"""
+        """Check if blocks are successfully stacked on table"""
         cube1_pos = states.get('cube1_pos', np.zeros(3))
         cube2_pos = states.get('cube2_pos', np.zeros(3))
+        cube3_pos = states.get('cube3_pos', np.zeros(3))
         
-        # Success if cubes are stacked
-        horizontal_distance = np.linalg.norm(cube1_pos[:2] - cube2_pos[:2])
-        height_diff = abs(cube2_pos[2] - cube1_pos[2])
-        
-        return horizontal_distance < 0.05 and 0.05 < height_diff < 0.15
-
-    def _get_scene_specific_termination(self, states: Dict[str, Any]) -> bool:
-        """Check if blocks have fallen off table"""
-        for obj_name in ['cube1', 'cube2', 'cube3']:
-            pos = states.get(f'{obj_name}_pos', np.zeros(3))
-            if pos[2] > 0.1: 
+        # Check if any cubes are stacked (adjusted for table environment)
+        cube_pairs = [(cube1_pos, cube2_pos), (cube1_pos, cube3_pos), (cube2_pos, cube3_pos)]
+        for pos1, pos2 in cube_pairs:
+            horizontal_distance = np.linalg.norm(pos1[:2] - pos2[:2])
+            height_diff = abs(pos2[2] - pos1[2])
+            
+            # Success if cubes are stacked on table
+            if horizontal_distance < 0.05 and 0.03 < height_diff < 0.08:
                 return True
         
         return False
+
+    def _get_scene_specific_termination(self, states: Dict[str, Any]) -> bool:
+        """Check if blocks have fallen off table"""
+        table_surface_height = 0.42  # Table surface height
+        
+        for obj_name in ['cube1', 'cube2', 'cube3']:
+            pos = states.get(f'{obj_name}_pos', np.zeros(3))
+            # Terminate if cube falls below table surface
+            if pos[2] < table_surface_height - 0.05:  # 5cm below table surface
+                print(f"Terminating: {obj_name} fell off table at height {pos[2]:.3f}")
+                return True
+            
+            # Terminate if cube is too far from table horizontally
+            table_center = np.array([0.6, 0.0])  # Table center in X,Y
+            cube_distance_from_table = np.linalg.norm(pos[:2] - table_center)
+            if cube_distance_from_table > 0.5:  # More than 50cm from table center
+                print(f"Terminating: {obj_name} too far from table at distance {cube_distance_from_table:.3f}")
+                
+                return True
+            
+            return False
 
 
 class CabinetEnv(AbstractMujocoEnv):

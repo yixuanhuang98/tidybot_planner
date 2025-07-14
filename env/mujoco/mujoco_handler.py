@@ -389,16 +389,20 @@ class MujocoHandler:
         # Reset MuJoCo data
         mujoco.mj_resetData(self.model, self.data)
         
-        # Randomize cube positions
-        for i, (obj_name, qpos) in enumerate(self.qpos_cubes.items()):
-            # Randomize position
-            qpos[:2] += np.random.uniform(-0.3, 0.3, 2)
-            
-            # Randomize orientation
-            theta = np.random.uniform(-math.pi, math.pi)
-            qpos[3:7] = np.array([math.cos(theta / 2), 0, 0, math.sin(theta / 2)])
-            
-            print(f"{obj_name} reset to position: [{qpos[0]:.3f}, {qpos[1]:.3f}, {qpos[2]:.3f}], theta: {theta:.3f}")
+        # Do not randomize objects if they are on the table
+        if 'table' in self.mjcf_path:
+            print("Table scene detected, skipping object randomization.")
+        else:
+            # Randomize cube positions
+            for i, (obj_name, qpos) in enumerate(self.qpos_cubes.items()):
+                # Randomize position
+                qpos[:2] += np.random.uniform(-0.3, 0.3, 2)
+                
+                # Randomize orientation
+                theta = np.random.uniform(-math.pi, math.pi)
+                qpos[3:7] = np.array([math.cos(theta / 2), 0, 0, math.sin(theta / 2)])
+                
+                print(f"{obj_name} reset to position: [{qpos[0]:.3f}, {qpos[1]:.3f}, {qpos[2]:.3f}], theta: {theta:.3f}")
         
         # Forward simulation
         mujoco.mj_forward(self.model, self.data)
