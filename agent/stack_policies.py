@@ -31,17 +31,17 @@ class MotionPlannerPolicyStack(BaseAgent):
     PLACE_BASE_TOLERANCE = 0.005   # 0.5 cm for placement (example, adjust as needed)
     
     # Stacking parameters
-    STACK_HEIGHT_OFFSET = 0.10  # 10cm above the target cube for stacking
+    STACK_HEIGHT_OFFSET = 0.13  # 10cm above the target cube for stacking
 
     # Manipulation parameters
     ROBOT_BASE_HEIGHT = 0.48
     PICK_APPROACH_HEIGHT_OFFSET = 0.25
-    PICK_LOWER_DIST = 0.09
+    PICK_LOWER_DIST = 0.07
     PICK_LIFT_DIST = 0.28  # Net lift is (PICK_LIFT_DIST - PICK_LOWER_DIST)
     PLACE_APPROACH_HEIGHT_OFFSET = 0.10
 
     # Grasping parameters
-    GRASP_SUCCESS_THRESHOLD = 0.65
+    GRASP_SUCCESS_THRESHOLD = 0.7
     GRASP_PROGRESS_THRESHOLD = 0.3
     GRASP_TIMEOUT_S = 3.0
     PLACE_SUCCESS_THRESHOLD = 0.05
