@@ -1,380 +1,52 @@
-# Author: Jimmy Wu
-# Date: October 2024
-
-import logging
 import math
-import socket
-import threading
 import time
-from queue import Queue
-import cv2 as cv
 import numpy as np
-import zmq
-from flask import Flask, render_template
-from flask_socketio import SocketIO, emit
-from scipy.spatial.transform import Rotation as R
-from constants import POLICY_SERVER_HOST, POLICY_SERVER_PORT, POLICY_IMAGE_WIDTH, POLICY_IMAGE_HEIGHT
-from enum import Enum, auto
-from agent.stack_policies import MotionPlannerPolicyStack  # <-- Add this import
-from agent.motion_planner_policy_stack_top import MotionPlannerPolicyStackTop
+from enum import Enum
 
-class Policy:
-    def reset(self):
-        raise NotImplementedError
+# Import BaseAgent base class
+from .base_agent import BaseAgent
 
-    def step(self, obs):
-        raise NotImplementedError
-
-class WebServer:
-    def __init__(self, queue):
-        self.app = Flask(__name__)
-        self.socketio = SocketIO(self.app)
-        self.queue = queue
-
-        @self.app.route('/')
-        def index():
-            return render_template('index.html')
-
-        @self.socketio.on('message')
-        def handle_message(data):
-            # Send the timestamp back for RTT calculation (expected RTT on 5 GHz Wi-Fi is 7 ms)
-            emit('echo', data['timestamp'])
-
-            # Add data to queue for processing
-            self.queue.put(data)
-
-        # Reduce verbose Flask log output
-        logging.getLogger('werkzeug').setLevel(logging.WARNING)
-
-    def run(self):
-        # Get IP address
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(0)
-        try:
-            s.connect(('8.8.8.8', 1))
-            address = s.getsockname()[0]
-        except Exception:
-            address = '127.0.0.1'
-        finally:
-            s.close()
-        print(f'Starting server at {address}:5000')
-        self.socketio.run(self.app, host='0.0.0.0')
-
-DEVICE_CAMERA_OFFSET = np.array([0.0, 0.02, -0.04])  # iPhone 14 Pro
-
-# Convert coordinate system from WebXR to robot
-def convert_webxr_pose(pos, quat):
-    # WebXR: +x right, +y up, +z back; Robot: +x forward, +y left, +z up
-    pos = np.array([-pos['z'], -pos['x'], pos['y']], dtype=np.float64)
-    rot = R.from_quat([-quat['z'], -quat['x'], quat['y'], quat['w']])
-
-    # Apply offset so that rotations are around device center instead of device camera
-    pos = pos + rot.apply(DEVICE_CAMERA_OFFSET)
-
-    return pos, rot
-
-TWO_PI = 2 * math.pi
-
-class TeleopController:
-    def __init__(self):
-        # Teleop device IDs
-        self.primary_device_id = None    # Primary device controls either the arm or the base
-        self.secondary_device_id = None  # Optional secondary device controls the base
-        self.enabled_counts = {}
-
-        # Mobile base pose
-        self.base_pose = None
-
-        # Teleop targets
-        self.targets_initialized = False
-        self.base_target_pose = None
-        self.arm_target_pos = None
-        self.arm_target_rot = None
-        self.gripper_target_pos = None
-
-        # WebXR reference poses
-        self.base_xr_ref_pos = None
-        self.base_xr_ref_rot_inv = None
-        self.arm_xr_ref_pos = None
-        self.arm_xr_ref_rot_inv = None
-
-        # Robot reference poses
-        self.base_ref_pose = None
-        self.arm_ref_pos = None
-        self.arm_ref_rot = None
-        self.arm_ref_base_pose = None  # For optional secondary control of base
-        self.gripper_ref_pos = None
-
-    def process_message(self, data):
-        if not self.targets_initialized:
-            return
-
-        # Use device ID to disambiguate between primary and secondary devices
-        device_id = data['device_id']
-
-        # Update enabled count for the device that sent this message
-        self.enabled_counts[device_id] = self.enabled_counts.get(device_id, 0) + 1 if 'teleop_mode' in data else 0
-
-        # Assign primary and secondary devices
-        if self.enabled_counts[device_id] > 2:
-            if self.primary_device_id is None and device_id != self.secondary_device_id:
-                # Note: We skip the first 2 steps because WebXR pose updates have higher latency than touch events
-                self.primary_device_id = device_id
-            elif self.secondary_device_id is None and device_id != self.primary_device_id:
-                self.secondary_device_id = device_id
-        elif self.enabled_counts[device_id] == 0:
-            if device_id == self.primary_device_id:
-                self.primary_device_id = None  # Primary device no longer enabled
-                self.base_xr_ref_pos = None
-                self.arm_xr_ref_pos = None
-            elif device_id == self.secondary_device_id:
-                self.secondary_device_id = None
-                self.base_xr_ref_pos = None
-
-        # Teleop is enabled
-        if self.primary_device_id is not None and 'teleop_mode' in data:
-            pos, rot = convert_webxr_pose(data['position'], data['orientation'])
-
-            # Base movement
-            if data['teleop_mode'] == 'base' or device_id == self.secondary_device_id:  # Note: Secondary device can only control base
-                # Store reference poses
-                if self.base_xr_ref_pos is None:
-                    self.base_ref_pose = self.base_pose.copy()
-                    self.base_xr_ref_pos = pos[:2]
-                    self.base_xr_ref_rot_inv = rot.inv()
-
-                # Position
-                self.base_target_pose[:2] = self.base_ref_pose[:2] + (pos[:2] - self.base_xr_ref_pos)
-
-                # Orientation
-                base_fwd_vec_rotated = (rot * self.base_xr_ref_rot_inv).apply([1.0, 0.0, 0.0])
-                base_target_theta = self.base_ref_pose[2] + math.atan2(base_fwd_vec_rotated[1], base_fwd_vec_rotated[0])
-                self.base_target_pose[2] += (base_target_theta - self.base_target_pose[2] + math.pi) % TWO_PI - math.pi  # Unwrapped
-
-            # Arm movement
-            elif data['teleop_mode'] == 'arm':
-                # Store reference poses
-                if self.arm_xr_ref_pos is None:
-                    self.arm_xr_ref_pos = pos
-                    self.arm_xr_ref_rot_inv = rot.inv()
-                    self.arm_ref_pos = self.arm_target_pos.copy()
-                    self.arm_ref_rot = self.arm_target_rot
-                    self.arm_ref_base_pose = self.base_pose.copy()
-                    self.gripper_ref_pos = self.gripper_target_pos
-
-                # Rotations around z-axis to go between global frame (base) and local frame (arm)
-                z_rot = R.from_rotvec(np.array([0.0, 0.0, 1.0]) * self.base_pose[2])
-                z_rot_inv = z_rot.inv()
-                ref_z_rot = R.from_rotvec(np.array([0.0, 0.0, 1.0]) * self.arm_ref_base_pose[2])
-
-                # Position
-                pos_diff = pos - self.arm_xr_ref_pos  # WebXR
-                pos_diff += ref_z_rot.apply(self.arm_ref_pos) - z_rot.apply(self.arm_ref_pos)  # Secondary base control: Compensate for base rotation
-                pos_diff[:2] += self.arm_ref_base_pose[:2] - self.base_pose[:2]  # Secondary base control: Compensate for base translation
-                self.arm_target_pos = self.arm_ref_pos + z_rot_inv.apply(pos_diff)
-
-                # Orientation
-                self.arm_target_rot = (z_rot_inv * (rot * self.arm_xr_ref_rot_inv) * ref_z_rot) * self.arm_ref_rot
-
-                # Gripper position
-                self.gripper_target_pos = np.clip(self.gripper_ref_pos + data['gripper_delta'], 0.0, 1.0)
-
-        # Teleop is disabled
-        elif self.primary_device_id is None:
-            # Update target pose in case base is pushed while teleop is disabled
-            self.base_target_pose = self.base_pose
-
-    def step(self, obs):
-        # Update robot state
-        self.base_pose = obs['base_pose']
-
-        # Initialize targets
-        if not self.targets_initialized:
-            self.base_target_pose = obs['base_pose']
-            self.arm_target_pos = obs['arm_pos']
-            self.arm_target_rot = R.from_quat(obs['arm_quat'])
-            self.gripper_target_pos = obs['gripper_pos']
-            self.targets_initialized = True
-
-        # Return no action if teleop is not enabled
-        if self.primary_device_id is None:
-            return None
-
-        # Get most recent teleop command
-        arm_quat = self.arm_target_rot.as_quat()
-        if arm_quat[3] < 0.0:  # Enforce quaternion uniqueness (Note: Not strictly necessary since policy training uses 6D rotation representation)
-            np.negative(arm_quat, out=arm_quat)
-        action = {
-            'base_pose': self.base_target_pose.copy(),
-            'arm_pos': self.arm_target_pos.copy(),
-            'arm_quat': arm_quat,
-            'gripper_pos': self.gripper_target_pos.copy(),
-        }
-
-        return action
-
-# Teleop using WebXR phone web app
-class TeleopPolicy(Policy):
-    def __init__(self):
-        self.web_server_queue = Queue()
-        self.teleop_controller = None
-        self.teleop_state = None  # States: episode_started -> episode_ended -> reset_env
-        self.episode_ended = False
-
-        # Web server for serving the WebXR phone web app
-        server = WebServer(self.web_server_queue)
-        threading.Thread(target=server.run, daemon=True).start()
-
-        # Listener thread to process messages from WebXR client
-        threading.Thread(target=self.listener_loop, daemon=True).start()
-
-    def reset(self):
-        self.teleop_controller = TeleopController()
-        self.episode_ended = False
-
-        # Wait for user to signal that episode has started
-        self.teleop_state = None
-        while self.teleop_state != 'episode_started':
-            time.sleep(0.01)
-
-    def step(self, obs):
-        # Signal that user has ended episode
-        if not self.episode_ended and self.teleop_state == 'episode_ended':
-            self.episode_ended = True
-            return 'end_episode'
-
-        # Signal that user is ready for env reset (after ending the episode)
-        if self.teleop_state == 'reset_env':
-            return 'reset_env'
-
-        return self._step(obs)
-
-    def _step(self, obs):
-        return self.teleop_controller.step(obs)
-
-    def listener_loop(self):
-        while True:
-            if not self.web_server_queue.empty():
-                data = self.web_server_queue.get()
-
-                # Update state
-                if 'state_update' in data:
-                    self.teleop_state = data['state_update']
-
-                # Process message if not stale
-                elif 1000 * time.time() - data['timestamp'] < 250:  # 250 ms
-                    self._process_message(data)
-
-            time.sleep(0.001)
-
-    def _process_message(self, data):
-        self.teleop_controller.process_message(data)
-
-# Execute policy running on remote server
-class RemotePolicy(TeleopPolicy):
-    def __init__(self):
-        super().__init__()
-
-        # Use phone as enabling device during policy rollout
-        self.enabled = False
-
-        # Connection to policy server
-        context = zmq.Context()
-        self.socket = context.socket(zmq.REQ)
-        self.socket.connect(f'tcp://{POLICY_SERVER_HOST}:{POLICY_SERVER_PORT}')
-        print(f'Connected to policy server at {POLICY_SERVER_HOST}:{POLICY_SERVER_PORT}')
-
-    def reset(self):
-        # Wait for user to signal that episode has started
-        super().reset()  # Note: Comment out to run without phone
-
-        # Check connection to policy server and reset policy
-        default_timeout = self.socket.getsockopt(zmq.RCVTIMEO)
-        self.socket.setsockopt(zmq.RCVTIMEO, 1000)  # Temporarily set 1000 ms timeout
-        self.socket.send_pyobj({'reset': True})
-        try:
-            self.socket.recv_pyobj()  # Note: Not secure. Only unpickle data you trust.
-        except zmq.error.Again as e:
-            raise Exception('Could not communicate with policy server') from e
-        self.socket.setsockopt(zmq.RCVTIMEO, default_timeout)  # Put default timeout back
-
-        # Disable policy execution until user presses on screen
-        self.enabled = False  # Note: Set to True to run without phone
-
-    def _step(self, obs):
-        # Return teleop command if episode has ended
-        if self.episode_ended:
-            return self.teleop_controller.step(obs)
-
-        # Return no action if robot is not enabled
-        if not self.enabled:
-            return None
-
-        # Encode images
-        encoded_obs = {}
-        for k, v in obs.items():
-            if v.ndim == 3:
-                # Resize image to resolution expected by policy server
-                v = cv.resize(v, (POLICY_IMAGE_WIDTH, POLICY_IMAGE_HEIGHT))
-
-                # Encode image as JPEG
-                _, v = cv.imencode('.jpg', v)  # Note: Interprets RGB as BGR
-                encoded_obs[k] = v
-            else:
-                encoded_obs[k] = v
-
-        # Send obs to policy server
-        req = {'obs': encoded_obs}
-        self.socket.send_pyobj(req)
-
-        # Get action from policy server
-        rep = self.socket.recv_pyobj()  # Note: Not secure. Only unpickle data you trust.
-        action = rep['action']
-
-        return action
-
-    def _process_message(self, data):
-        if self.episode_ended:
-            # Run teleop controller if episode has ended
-            self.teleop_controller.process_message(data)
-        else:
-            # Enable policy execution if user is pressing on screen
-            self.enabled = 'teleop_mode' in data
 
 class PickState(Enum):
-    APPROACH = auto()
-    LOWER = auto()
-    GRASP = auto()
-    LIFT = auto()
+    APPROACH = "approach"
+    LOWER = "lower"
+    GRASP = "grasp"
+    LIFT = "lift"
+
 
 class PlaceState(Enum):
-    APPROACH = auto()
-    RELEASE = auto()
+    APPROACH = "approach"
+    LOWER_TO_PLACE = "lower_to_place"
+    RELEASE = "release"
+    LIFT_AWAY = "lift_away"
 
-# Motion Planner generated plan. 
-class MotionPlannerPolicy(Policy):
+
+# Motion Planner generated plan for stacking cubes
+class MotionPlannerPolicyStackTop(BaseAgent):
     # Base following parameters (from BaseController)
     LOOKAHEAD_DISTANCE = 0.3  # 30 cm
     POSITION_TOLERANCE = 0.005  # 0.5 cm (reduced from 1.5 cm)
     HEADING_TOLERANCE = math.radians(2.1)  # 2.1 degrees
     GRASP_BASE_TOLERANCE = 0.002  # 0.2 cm for grasp
-    PLACE_BASE_TOLERANCE = 0.02   # 1.0 cm for placement (example, adjust as needed)
-
-    # Object and target locations
-    PLACEMENT_X_OFFSET = 0.5  # 50cm in X direction
+    PLACE_BASE_TOLERANCE = 0.005   # 0.5 cm for placement (example, adjust as needed)
+    
+    # Stacking parameters
+    STACK_HEIGHT_OFFSET = 0.10  # 10cm above the target cube for stacking
 
     # Manipulation parameters
     ROBOT_BASE_HEIGHT = 0.48
     PICK_APPROACH_HEIGHT_OFFSET = 0.25
-    PICK_LOWER_DIST = 0.08
+    PICK_LOWER_DIST = 0.09
     PICK_LIFT_DIST = 0.28  # Net lift is (PICK_LIFT_DIST - PICK_LOWER_DIST)
     PLACE_APPROACH_HEIGHT_OFFSET = 0.10
 
     # Grasping parameters
-    GRASP_SUCCESS_THRESHOLD = 0.6
+    GRASP_SUCCESS_THRESHOLD = 0.65
     GRASP_PROGRESS_THRESHOLD = 0.3
     GRASP_TIMEOUT_S = 3.0
-    PLACE_SUCCESS_THRESHOLD = 0.2
+    PLACE_SUCCESS_THRESHOLD = 0.05
+    GRASP_FAILURE_THRESHOLD = 0.95  # Gripper position above which grasp is considered failed after lift
+    MAX_GRASP_RETRIES = 3
 
     def __init__(self):
         # Motion planning state - following controller.py pattern
@@ -384,19 +56,22 @@ class MotionPlannerPolicy(Policy):
         self.current_waypoint_idx = 0
         self.target_ee_pos = None
         self.grasp_state = None  # Replaces grasp_step
+        self.base_movement_retries = 0
+        self.grasp_retries = 0
         
         # Base following parameters
         self.lookahead_position = None
         
         # Object and target locations (using ground truth from MuJoCo)
-        self.object_location = None
-        self.target_location = None
+        self.source_cube_location = None  # Cube with smallest x value
+        self.target_cube_location = None  # Cube with largest x value
+        self.stack_location = None        # Position on top of target cube
         
         # Enable policy execution immediately (no web interface required)
         self.enabled = True
         self.episode_ended = False
         
-        print(f'Motion planner policy initialized - ready to start automatically')
+        print(f'Motion planner stack policy initialized - ready to start automatically')
 
     def reset(self):
         # Reset motion planning state
@@ -408,6 +83,13 @@ class MotionPlannerPolicy(Policy):
         self.lookahead_position = None
         self.episode_ended = False
         self.grasp_state = None
+        self.base_movement_retries = 0
+        self.grasp_retries = 0
+        
+        # Reset cube locations
+        self.source_cube_location = None
+        self.target_cube_location = None
+        self.stack_location = None
         
         # Clean up any grasp tracking variables
         if hasattr(self, 'grasp_start_time'):
@@ -418,7 +100,7 @@ class MotionPlannerPolicy(Policy):
         # Enable policy execution immediately
         self.enabled = True
         
-        print("Motion planner reset - starting episode automatically")
+        print("Motion planner stack policy reset - starting episode automatically")
 
     def step(self, obs):
         # Return no action if episode has ended
@@ -444,25 +126,25 @@ class MotionPlannerPolicy(Policy):
         # State machine following controller.py pattern
         if self.state == 'idle':
             # Detect objects and plan new command
-            detected_objects = self.detect_objects_from_ground_truth(obs)
-            if detected_objects:
-                # Create pick command
-                self.object_location = detected_objects[0]
-                # Set placement location relative to detected object (e.g., 50cm away)
-                self.target_location = np.array([
-                    self.object_location[0] + self.PLACEMENT_X_OFFSET,  # 50cm in X direction
-                    self.object_location[1],        # Same Y as object
-                    self.object_location[2]         # Same Z as object (table height)
+            cube_info = self.detect_cubes_for_stacking(obs)
+            if cube_info:
+                self.source_cube_location, self.target_cube_location = cube_info
+                # Set stack location on top of target cube
+                self.stack_location = np.array([
+                    self.target_cube_location[0],  # Same X as target cube
+                    self.target_cube_location[1],  # Same Y as target cube
+                    self.target_cube_location[2] + self.STACK_HEIGHT_OFFSET  # Stack on top
                 ])
                 
                 pick_command = {
                     'primitive_name': 'pick',
-                    'waypoints': [base_pose[:2].tolist(), self.object_location[:2].tolist()],
-                    'object_3d_pos': self.object_location.copy()  # Store full 3D position
+                    'waypoints': [base_pose[:2].tolist(), self.source_cube_location[:2].tolist()],
+                    'object_3d_pos': self.source_cube_location.copy()  # Store full 3D position
                 }
                 
-                print(f"Object detected at: {self.object_location}")
-                print(f"Target placement location: {self.target_location}")
+                print(f"Source cube (smallest x) at: {self.source_cube_location}")
+                print(f"Target cube (largest x) at: {self.target_cube_location}")
+                print(f"Stack location: {self.stack_location}")
                 print(f"Creating pick command with waypoints: {pick_command['waypoints']}")
                 
                 # Build base command and start moving
@@ -474,7 +156,9 @@ class MotionPlannerPolicy(Policy):
                     self.current_waypoint_idx = 1
                     self.lookahead_position = None
                     self.state = 'moving'
-                    print(f"Starting base movement to object at {self.object_location}")
+                    self.base_movement_retries = 0
+                    self.grasp_retries = 0
+                    print(f"Starting base movement to source cube at {self.source_cube_location}")
                     print(f"Base waypoints: {self.base_waypoints}")
                     print(f"Target EE position: {self.target_ee_pos}")
                 else:
@@ -494,7 +178,6 @@ class MotionPlannerPolicy(Policy):
                     end_effector_offset = self.get_end_effector_offset(self.current_command['primitive_name'])
                     diff = abs(end_effector_offset - distance_to_target)
                     print(f"Distance to target EE: {distance_to_target:.3f}, EE offset: {end_effector_offset:.3f}, diff: {diff:.3f}")
-                    # Set tolerance based on current command type
                     if self.current_command['primitive_name'] == 'pick':
                         base_tolerance = self.GRASP_BASE_TOLERANCE
                     else:
@@ -503,8 +186,27 @@ class MotionPlannerPolicy(Policy):
                         self.state = 'manipulating'
                         print("Base reached target, starting arm manipulation")
                     else:
-                        print(f'Too far from target end effector position ({{(100 * diff):.1f}} cm)')
-                        self.state = 'idle'
+                        if self.base_movement_retries < 3:
+                            self.base_movement_retries += 1
+                            print(f'Too far from target end effector position ({(100 * diff):.1f} cm). Retrying, attempt {self.base_movement_retries}/3.')
+                            
+                            # Rebuild base command from current pose
+                            self.current_command['waypoints'][0] = base_pose[:2].tolist()
+                            base_command = self.build_base_command(self.current_command)
+                            
+                            if base_command:
+                                self.base_waypoints = base_command['waypoints']
+                                self.target_ee_pos = base_command['target_ee_pos']
+                                self.current_waypoint_idx = 1
+                                self.lookahead_position = None
+                                # Stay in 'moving' state to execute new path
+                                print(f"Restarting base movement. New waypoints: {self.base_waypoints}")
+                            else:
+                                print("Failed to build base command for retry.")
+                                self.state = 'idle'
+                        else:
+                            print(f'Too far from target end effector position ({(100 * diff):.1f} cm) after 3 retries.')
+                            self.state = 'idle'
                 else:
                     self.state = 'idle'
             else:
@@ -618,28 +320,41 @@ class MotionPlannerPolicy(Policy):
 
                     print(f"Step 4: Lifting object... target height: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
                     if np.allclose(arm_pos, target_arm_pos, atol=0.05):  # 5cm tolerance
-                        print("Object lifted successfully! Now moving to placement location.")
-                        # Create place command
-                        place_command = {
-                            'primitive_name': 'place',
-                            'waypoints': [base_pose[:2].tolist(), self.target_location[:2].tolist()],
-                            'target_3d_pos': self.target_location.copy()
-                        }
-                        
-                        base_command = self.build_base_command(place_command)
-                        if base_command:
-                            self.current_command = place_command
-                            self.base_waypoints = base_command['waypoints']
-                            self.target_ee_pos = base_command['target_ee_pos']
-                            self.current_waypoint_idx = 1
-                            self.lookahead_position = None
-                            self.state = 'moving'
-                            self.grasp_state = None  # Reset for next manipulation
-                            print(f"Starting base movement to placement location at {self.target_location}")
+                        # Check for grasp failure after lifting
+                        if gripper_pos[0] > self.GRASP_FAILURE_THRESHOLD:
+                            if self.grasp_retries < self.MAX_GRASP_RETRIES:
+                                self.grasp_retries += 1
+                                print(f"Grasp failed after lift (gripper pos: {gripper_pos[0]:.3f}). Retrying grasp, attempt {self.grasp_retries}/{self.MAX_GRASP_RETRIES}.")
+                                self.grasp_state = PickState.APPROACH
+                            else:
+                                print(f"Grasp failed after {self.MAX_GRASP_RETRIES} retries. Aborting.")
+                                self.episode_ended = True
+                                self.state = 'idle'
                         else:
-                            print("Failed to build place command")
-                            self.episode_ended = True
-                            self.state = 'idle'
+                            print("Object lifted successfully! Now moving to stack location on target cube.")
+                            self.grasp_retries = 0 # Reset for next pick
+                            # Create place command for stacking
+                            place_command = {
+                                'primitive_name': 'place',
+                                'waypoints': [base_pose[:2].tolist(), self.stack_location[:2].tolist()],
+                                'target_3d_pos': self.stack_location.copy()
+                            }
+                            
+                            base_command = self.build_base_command(place_command)
+                            if base_command:
+                                self.current_command = place_command
+                                self.base_waypoints = base_command['waypoints']
+                                self.target_ee_pos = base_command['target_ee_pos']
+                                self.current_waypoint_idx = 1
+                                self.lookahead_position = None
+                                self.state = 'moving'
+                                self.base_movement_retries = 0
+                                self.grasp_state = None  # Reset for next manipulation
+                                print(f"Starting base movement to stack location at {self.stack_location}")
+                            else:
+                                print("Failed to build place command")
+                                self.episode_ended = True
+                                self.state = 'idle'
 
                 # Create action from targets
                 action = {
@@ -659,10 +374,35 @@ class MotionPlannerPolicy(Policy):
                 target_arm_quat = arm_quat.copy()
                 target_gripper_pos = gripper_pos.copy()
 
-                # Position arm above placement location and open gripper
-                target_3d_pos = self.current_command['target_3d_pos']
-                # Calculate global position difference
-                global_diff = np.array([
+                # Recalculate precise stack location based on current target cube position
+                # This accounts for any base positioning errors and ensures accurate placement
+                cube_info = self.detect_cubes_for_stacking(obs)
+                if cube_info:
+                    _, current_target_cube_location = cube_info
+                    # Update stack location with current target cube position
+                    precise_stack_location = np.array([
+                        current_target_cube_location[0],  # Same X as current target cube position
+                        current_target_cube_location[1],  # Same Y as current target cube position
+                        current_target_cube_location[2] + self.STACK_HEIGHT_OFFSET  # Stack on top
+                    ])
+                    target_3d_pos = precise_stack_location
+                    print(f"Updated precise stack location: {precise_stack_location}")
+                else:
+                    # Fallback to original target if detection fails
+                    target_3d_pos = self.current_command['target_3d_pos']
+                    print("Using fallback stack location")
+
+                # Calculate positions for two-stage placement
+                # Stage 1: Safe approach position (20cm above target cube)
+                safe_approach_height = 0.20  # 20cm above target cube
+                global_diff_safe = np.array([
+                    target_3d_pos[0] - base_pose[0],
+                    target_3d_pos[1] - base_pose[1], 
+                    target_3d_pos[2] + safe_approach_height - self.ROBOT_BASE_HEIGHT  # Target height + 20cm - base height
+                ])
+                
+                # Stage 2: Final placement position (10cm above target cube - already in target_3d_pos)
+                global_diff_place = np.array([
                     target_3d_pos[0] - base_pose[0],
                     target_3d_pos[1] - base_pose[1], 
                     target_3d_pos[2] + self.PLACE_APPROACH_HEIGHT_OFFSET - self.ROBOT_BASE_HEIGHT  # Target height + offset - base height
@@ -673,36 +413,72 @@ class MotionPlannerPolicy(Policy):
                 cos_angle = math.cos(-base_angle)  # Negative for inverse rotation
                 sin_angle = math.sin(-base_angle)
                 
-                target_relative_pos = np.array([
-                    cos_angle * global_diff[0] - sin_angle * global_diff[1],
-                    sin_angle * global_diff[0] + cos_angle * global_diff[1],
-                    global_diff[2]  # Z component unchanged
+                safe_approach_pos = np.array([
+                    cos_angle * global_diff_safe[0] - sin_angle * global_diff_safe[1],
+                    sin_angle * global_diff_safe[0] + cos_angle * global_diff_safe[1],
+                    global_diff_safe[2]  # Z component unchanged
                 ])
                 
-                print(f"Placing: target_relative_pos = {target_relative_pos}")
+                final_place_pos = np.array([
+                    cos_angle * global_diff_place[0] - sin_angle * global_diff_place[1],
+                    sin_angle * global_diff_place[0] + cos_angle * global_diff_place[1],
+                    global_diff_place[2]  # Z component unchanged
+                ])
+                
+                print(f"Stacking: safe_approach_pos = {safe_approach_pos}")
+                print(f"Stacking: final_place_pos = {final_place_pos}")
                 print(f"Target EE pos: {self.target_ee_pos}, Base pose: {base_pose}")
                 print(f"Grasp state: {self.grasp_state}")
                 
                 if self.grasp_state == PlaceState.APPROACH:
-                    # Step 1: Position arm above placement location with closed gripper
-                    target_arm_pos = target_relative_pos
+                    # Step 1: Position arm at safe approach height (20cm above target cube)
+                    target_arm_pos = safe_approach_pos
                     target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
                     target_gripper_pos = np.array([1.0])  # Gripper closed
 
-                    print(f"Step 1: Positioning arm above placement location with closed gripper")
-                    if np.allclose(arm_pos, target_arm_pos, atol=0.05):  # 5cm tolerance
+                    print(f"Step 1: Moving to safe approach position (20cm above target cube)")
+                    print(f"Target arm pos: {target_arm_pos}, Current arm pos: {arm_pos}")
+                    print(f"Position error: {np.linalg.norm(arm_pos[:2] - target_arm_pos[:2]):.4f}m")
+                    if np.allclose(arm_pos[:2], target_arm_pos[:2], atol=0.02):  # 2cm tolerance for approach
+                        self.grasp_state = PlaceState.LOWER_TO_PLACE
+                        print("Reached safe approach position, now lowering to placement height")
+                
+                elif self.grasp_state == PlaceState.LOWER_TO_PLACE:
+                    # Step 2: Lower to final placement position (10cm above target cube)
+                    target_arm_pos = final_place_pos
+                    target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
+                    target_gripper_pos = np.array([1.0])  # Gripper closed
+
+                    print(f"Step 2: Lowering to final placement position (10cm above target cube)")
+                    print(f"Target arm pos: {target_arm_pos}, Current arm pos: {arm_pos}")
+                    print(f"Position error: {np.linalg.norm(arm_pos[:3] - target_arm_pos[:3]):.4f}m")
+                    if np.allclose(arm_pos[:3], target_arm_pos[:3], atol=0.01):  # 1cm tolerance for precise placement
                         self.grasp_state = PlaceState.RELEASE
-                        print("Arm positioned above placement location, opening gripper")
+                        print("Arm positioned at final placement height, opening gripper")
                 
                 elif self.grasp_state == PlaceState.RELEASE:
-                    # Step 2: Open gripper to place object
-                    target_arm_pos = target_relative_pos  # Maintain arm position
+                    # Step 3: Open gripper to place object on top of target cube
+                    target_arm_pos = final_place_pos  # Maintain arm position at placement height
                     target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
                     target_gripper_pos = np.array([0.0])  # Gripper open
 
-                    print(f"Step 2: Opening gripper... current position: {gripper_pos[0]:.3f}")
+                    print(f"Step 3: Opening gripper to stack cube... current position: {gripper_pos[0]:.3f}")
                     if gripper_pos[0] < self.PLACE_SUCCESS_THRESHOLD:
-                        print("Object placed successfully! Task complete.")
+                        print("Cube stacked successfully! Now lifting arm away.")
+                        self.grasp_state = PlaceState.LIFT_AWAY
+                
+                elif self.grasp_state == PlaceState.LIFT_AWAY:
+                    # Step 4: Lift arm away from stacked cubes with open gripper
+                    lifted_away_pos = final_place_pos.copy()
+                    lifted_away_pos[2] += 0.15  # Lift arm 15cm above the placement position
+                    target_arm_pos = lifted_away_pos
+                    target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
+                    target_gripper_pos = np.array([0.0])  # Gripper open
+
+                    print(f"Step 4: Lifting arm away from stacked cubes... target height: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
+                    print(f"Position error: {np.linalg.norm(arm_pos - target_arm_pos):.4f}m")
+                    if np.allclose(arm_pos[:3], target_arm_pos[:3], atol=0.03):  # 3cm tolerance (reduced from 5cm)
+                        print("Arm lifted away successfully! Task complete.")
                         self.episode_ended = True  # End the episode
                         self.state = 'idle'
                 
@@ -835,10 +611,8 @@ class MotionPlannerPolicy(Policy):
                     return t2
         return None
 
-    def detect_objects_from_ground_truth(self, obs):
-        """Detect objects using ground truth from MuJoCo simulation and find the one with smallest x value"""
-        detected_objects = []
-        
+    def detect_cubes_for_stacking(self, obs):
+        """Detect cubes and return the source cube (smallest x) and target cube (largest x)"""
         # Get all three cube positions from MuJoCo environment
         cubes = []
         for i in range(1, 4):
@@ -850,14 +624,22 @@ class MotionPlannerPolicy(Policy):
             else:
                 print(f"Warning: {cube_key} not found in observation")
         
-        if cubes:
-            # Sort cubes by x position and select the one with smallest x value
-            cubes.sort(key=lambda x: x[0][0])  # Sort by x coordinate (first element of position)
-            target_cube_pos, target_cube_id = cubes[0]
-            detected_objects.append(target_cube_pos)
-            print(f"Selected cube {target_cube_id} with smallest x value: {target_cube_pos[0]:.3f}")
+        if len(cubes) < 2:
+            print("Warning: Need at least 2 cubes for stacking")
+            return None
         
-        return detected_objects
+        # Sort cubes by x position
+        cubes.sort(key=lambda x: x[0][0])  # Sort by x coordinate
+        
+        # Source cube: smallest x value
+        source_cube_pos, source_cube_id = cubes[0]
+        # Target cube: largest x value
+        target_cube_pos, target_cube_id = cubes[-1]
+        
+        print(f"Source cube (smallest x): cube {source_cube_id} at x={source_cube_pos[0]:.3f}")
+        print(f"Target cube (largest x): cube {target_cube_id} at x={target_cube_pos[0]:.3f}")
+        
+        return source_cube_pos, target_cube_pos
 
     def distance(self, pt1, pt2):
         """Calculate distance between two points from controller.py"""
@@ -881,7 +663,9 @@ class MotionPlannerPolicy(Policy):
 
         # Base movement only
         if command['primitive_name'] == 'move':
-            return {'waypoints': command['waypoints'], 'target_ee_pos': None, 'position_tolerance': 0.1}
+            return {'waypoints': command['waypoints'], 
+                    'target_ee_pos': None, 
+                    'position_tolerance': 0.1}
 
         # Modify waypoints so that the end effector is placed at the target end effector position
         target_ee_pos = command['waypoints'][-1]
@@ -913,43 +697,5 @@ class MotionPlannerPolicy(Policy):
             target_position = (curr_position[0] + signed_dist * math.cos(target_heading), curr_position[1] + signed_dist * math.sin(target_heading))
             waypoints = [curr_position, target_position]
             
-        return {'waypoints': waypoints, 'target_ee_pos': target_ee_pos}
-
-# Stacking motion planner policy (stacking three objects)
-class MotionPlannerPolicyStackWrapper(Policy):
-    def __init__(self):
-        self.impl = MotionPlannerPolicyStack()
-    def reset(self):
-        self.impl.reset()
-    def step(self, obs):
-        return self.impl.step(obs)
-
-
-# Stacking motion planner policy (stacking three objects)
-class MotionPlannerPolicyStackTopWrapper(Policy):
-    def __init__(self):
-        self.impl = MotionPlannerPolicyStackTop()
-    def reset(self):
-        self.impl.reset()
-    def step(self, obs):
-        return self.impl.step(obs)
-
-if __name__ == '__main__':
-    # WebServer(Queue()).run(); time.sleep(1000)
-    # WebXRListener(); time.sleep(1000)
-    from constants import POLICY_CONTROL_PERIOD
-    obs = {
-        'base_pose': np.zeros(3),
-        'arm_pos': np.zeros(3),
-        'arm_quat': np.array([0.0, 0.0, 0.0, 1.0]),
-        'gripper_pos': np.zeros(1),
-        'base_image': np.zeros((640, 360, 3)),
-        'wrist_image': np.zeros((640, 480, 3)),
-    }
-    policy = TeleopPolicy()
-    # policy = RemotePolicy()
-    while True:
-        policy.reset()
-        for _ in range(100):
-            print(policy.step(obs))
-            time.sleep(POLICY_CONTROL_PERIOD)  # Note: Not precise
+        return {'waypoints': waypoints, 
+                'target_ee_pos': target_ee_pos} 
