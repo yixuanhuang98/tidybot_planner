@@ -87,23 +87,31 @@ def main(args):
     if args.sim:
         from mujoco_env import MujocoEnv
         if args.teleop:
-            env = MujocoEnv(show_images=True)
+            env = MujocoEnv(show_images=True, table_scene=args.table_scene)
         else:
-            env = MujocoEnv()
+            env = MujocoEnv(table_scene=args.table_scene)
     else:
         from real_env import RealEnv
         env = RealEnv()
 
     # Create policy
-    if args.stack_policy_three:
+    if args.table_scene and args.stack_policy:
+        from policies import MotionPlannerPolicyStackTableWrapper
+        policy = MotionPlannerPolicyStackTableWrapper()
+    elif args.stack_policy_three:
+        from policies import MotionPlannerPolicyStackThreeWrapper
         policy = MotionPlannerPolicyStackThreeWrapper()
     elif args.stack_policy:
+        from policies import MotionPlannerPolicyStackWrapper
         policy = MotionPlannerPolicyStackWrapper()
     elif args.motion_planner:
+        from policies import MotionPlannerPolicy
         policy = MotionPlannerPolicy()
     elif args.teleop:
+        from policies import TeleopPolicy
         policy = TeleopPolicy()
     else:
+        from policies import RemotePolicy
         policy = RemotePolicy()
 
     try:
@@ -120,6 +128,7 @@ if __name__ == '__main__':
     parser.add_argument('--motion_planner', action='store_true')
     parser.add_argument('--stack_policy', action='store_true', help='Enable stacking policy (stack cubes)')
     parser.add_argument('--stack_policy_three', action='store_true', help='Enable stacking policy (stack three cubes)')
+    parser.add_argument('--table_scene', action='store_true', help='Use table scene with three cubes')
     parser.add_argument('--save', action='store_true')
     parser.add_argument('--output-dir', default='data/demos')
     main(parser.parse_args())

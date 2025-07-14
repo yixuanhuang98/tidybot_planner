@@ -699,3 +699,16 @@ class MotionPlannerPolicyStack(BaseAgent):
             
         return {'waypoints': waypoints, 
                 'target_ee_pos': target_ee_pos} 
+
+
+# Table stacking policy - inherits from MotionPlannerPolicyStack but adjusts placement height
+class MotionPlannerPolicyStackTable(MotionPlannerPolicyStack):
+    def __init__(self):
+        super().__init__()
+        # Adjust stacking parameters for table scene
+        # The table height is 0.4m, and cubes are placed at 0.44m (table + 0.04m)
+        # For stacking on table, we need to account for the table height
+        self.STACK_HEIGHT_OFFSET = 0.04  # 4cm above the target cube for stacking on table
+        self.PLACE_APPROACH_HEIGHT_OFFSET = 0.17  # 15cm above target for safer approach on table
+        
+        print(f'Table stacking policy initialized - STACK_HEIGHT_OFFSET: {self.STACK_HEIGHT_OFFSET}m, PLACE_APPROACH_HEIGHT_OFFSET: {self.PLACE_APPROACH_HEIGHT_OFFSET}m') 

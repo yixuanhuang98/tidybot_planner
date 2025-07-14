@@ -209,11 +209,12 @@ class ArmController:
             self.ctrl[:] = self.otg_out.new_position
 
 class MujocoSim:
-    def __init__(self, mjcf_path, command_queue, shm_state, show_viewer=True):
+    def __init__(self, mjcf_path, command_queue, shm_state, show_viewer=True, table_scene = False):
         self.model = mujoco.MjModel.from_xml_path(mjcf_path)
         self.data = mujoco.MjData(self.model)
         self.command_queue = command_queue
         self.show_viewer = show_viewer
+        self.table_scene = table_scene
 
         # Enable gravity compensation for everything except objects
         self.model.body_gravcomp[:] = 1.0
@@ -268,7 +269,8 @@ class MujocoSim:
         cubes = [self.qpos_cube1, self.qpos_cube2, self.qpos_cube3]
         for i, cube_qpos in enumerate(cubes):
             # Randomize position within a reasonable range around the table
-            cube_qpos[:2] += np.random.uniform(-0.3, 0.3, 2)  # X and Y position
+            if not self.table_scene:
+                cube_qpos[:2] += np.random.uniform(-0.3, 0.3, 2)  # X and Y position
             # Keep Z position at table height (don't randomize vertical position)
             
             # Randomize orientation around Z-axis (yaw)
@@ -337,12 +339,16 @@ class MujocoSim:
                 mujoco.mj_step(self.model, self.data)
 
 class MujocoEnv:
-    def __init__(self, render_images=True, show_viewer=True, show_images=False):
-        self.mjcf_path = 'models/stanford_tidybot/scene.xml'
+    def __init__(self, render_images=True, show_viewer=True, show_images=False, table_scene=False):
+        if table_scene:
+            self.mjcf_path = 'models/stanford_tidybot/blocks_table_scene.xml'
+        else:
+            self.mjcf_path = 'models/stanford_tidybot/scene.xml'
         self.render_images = render_images
         self.show_viewer = show_viewer
         self.show_images = show_images
         self.command_queue = mp.Queue(1)
+        self.table_scene = table_scene
 
         # Shared memory for state observations
         self.shm_state = ShmState()
@@ -365,7 +371,7 @@ class MujocoEnv:
 
     def physics_loop(self):
         # Create sim
-        sim = MujocoSim(self.mjcf_path, self.command_queue, self.shm_state, show_viewer=self.show_viewer)
+        sim = MujocoSim(self.mjcf_path, self.command_queue, self.shm_state, show_viewer=self.show_viewer, table_scene = self.table_scene)
 
         # Start render loop
         if self.render_images:
