@@ -1,6 +1,8 @@
 <mujoco model="blocks table scene">
   <include file="tidybot.xml"/>
 
+  <option timestep="0.002" solver="Newton" iterations="50" tolerance="1e-10"/>
+  
   <statistic center="0.25 0 0.6" extent="1.0" meansize="0.05"/>
 
   <visual>
@@ -18,34 +20,44 @@
     <material name="table_material" texture="wood" rgba="0.8 0.6 0.4 1"/>
   </asset>
 
+  <default>
+    <geom solimp="0.9 0.95 0.001" solref="0.02 1" friction="1.0 0.1 0.1" margin="0.001"/>
+    <default class="table">
+      <geom solimp="0.9 0.95 0.001" solref="0.02 1" friction="1.5 0.1 0.1" margin="0.001"/>
+    </default>
+    <default class="cube">
+      <geom solimp="0.9 0.95 0.001" solref="0.02 1" friction="1.2 0.1 0.1" margin="0.001"/>
+    </default>
+  </default>
+
   <worldbody>
     <light pos="0 0 1.5" directional="true"/>
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
     
     <!-- Table -->
     <body name="table" pos="0.6 0 0.0">
-      <geom name="table_top" type="box" size="0.4 0.3 0.02" pos="0 0 0.4" rgba="0.8 0.6 0.4 1"/>
-      <geom name="table_leg1" type="cylinder" size="0.02 0.2" pos="0.35 0.25 0.2" rgba="0.6 0.4 0.2 1"/>
-      <geom name="table_leg2" type="cylinder" size="0.02 0.2" pos="-0.35 0.25 0.2" rgba="0.6 0.4 0.2 1"/>
-      <geom name="table_leg3" type="cylinder" size="0.02 0.2" pos="0.35 -0.25 0.2" rgba="0.6 0.4 0.2 1"/>
-      <geom name="table_leg4" type="cylinder" size="0.02 0.2" pos="-0.35 -0.25 0.2" rgba="0.6 0.4 0.2 1"/>
+      <geom name="table_top" class="table" type="box" size="0.4 0.3 0.02" pos="0 0 0.4" rgba="0.8 0.6 0.4 1"/>
+      <geom name="table_leg1" class="table" type="cylinder" size="0.02 0.2" pos="0.35 0.25 0.2" rgba="0.6 0.4 0.2 1"/>
+      <geom name="table_leg2" class="table" type="cylinder" size="0.02 0.2" pos="-0.35 0.25 0.2" rgba="0.6 0.4 0.2 1"/>
+      <geom name="table_leg3" class="table" type="cylinder" size="0.02 0.2" pos="0.35 -0.25 0.2" rgba="0.6 0.4 0.2 1"/>
+      <geom name="table_leg4" class="table" type="cylinder" size="0.02 0.2" pos="-0.35 -0.25 0.2" rgba="0.6 0.4 0.2 1"/>
     </body>
     
     <!-- Objects on table -->
-    <body name="cube1" pos="0.5 0 0.44">
+    <body name="cube1" pos="0.5 0 0.45">
       <freejoint/>
-      <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001"/>
-      <geom type="box" size="0.02 0.02 0.02" rgba=".5 .7 .5 1" mass="0.1"/>
+      <inertial pos="0 0 0" mass="0.05" diaginertia="0.00005 0.00005 0.00005"/>
+      <geom class="cube" type="box" size="0.02 0.02 0.02" rgba=".5 .7 .5 1"/>
     </body>
-    <body name="cube2" pos="0.4 0.1 0.44">
+    <body name="cube2" pos="0.4 0.1 0.45">
       <freejoint/>
-      <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001"/>
-      <geom type="box" size="0.02 0.02 0.02" rgba=".7 .5 .5 1" mass="0.1"/>
+      <inertial pos="0 0 0" mass="0.05" diaginertia="0.00005 0.00005 0.00005"/>
+      <geom class="cube" type="box" size="0.02 0.02 0.02" rgba=".7 .5 .5 1"/>
     </body>
-    <body name="cube3" pos="0.45 -0.1 0.44">
+    <body name="cube3" pos="0.45 -0.1 0.45">
       <freejoint/>
-      <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001"/>
-      <geom type="box" size="0.02 0.02 0.02" rgba=".5 .5 .7 1" mass="0.1"/>
+      <inertial pos="0 0 0" mass="0.05" diaginertia="0.00005 0.00005 0.00005"/>
+      <geom class="cube" type="box" size="0.02 0.02 0.02" rgba=".5 .5 .7 1"/>
     </body>
     
     <!-- Third-person overview camera for complete scene view -->
