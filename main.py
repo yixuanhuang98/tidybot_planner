@@ -88,10 +88,14 @@ def main(args):
         from mujoco_env import MujocoEnv
         if args.drawer_scene:
             env = MujocoEnv(drawer_scene=True)
+        elif args.table_scene:
+            env = MujocoEnv(table_scene=True)
+        elif args.cupboard_scene:
+            env = MujocoEnv(cupboard_scene=True)
         elif args.teleop:
-            env = MujocoEnv(show_images=True, table_scene=args.table_scene)
+            env = MujocoEnv(show_images=True)
         else:
-            env = MujocoEnv(table_scene=args.table_scene)
+            env = MujocoEnv()
     else:
         from real_env import RealEnv
         env = RealEnv()
@@ -141,6 +145,7 @@ if __name__ == '__main__':
     parser.add_argument('--stack_policy_three', action='store_true', help='Enable stacking policy (stack three cubes) - works with both ground and table scenes')
     parser.add_argument('--table_scene', action='store_true', help='Use table scene with three cubes')
     parser.add_argument('--drawer_scene', action='store_true', help='Use drawer scene with three cubes')
+    parser.add_argument('--cupboard_scene', action='store_true', help='Use cupboard scene with three cubes')
     parser.add_argument('--save', action='store_true')
     parser.add_argument('--output-dir', default='data/demos')
     main(parser.parse_args())

@@ -341,11 +341,13 @@ class MujocoSim:
                 mujoco.mj_step(self.model, self.data)
 
 class MujocoEnv:
-    def __init__(self, render_images=True, show_viewer=True, show_images=False, table_scene=False, drawer_scene=False):
+    def __init__(self, render_images=True, show_viewer=True, show_images=False, table_scene=False, drawer_scene=False, cupboard_scene=False):
         if drawer_scene:
             self.mjcf_path = 'models/stanford_tidybot/drawer_scene.xml'
         elif table_scene:
             self.mjcf_path = 'models/stanford_tidybot/blocks_table_scene.xml'
+        elif cupboard_scene:
+            self.mjcf_path = 'models/stanford_tidybot/cupboard_scene.xml'
         else:
             self.mjcf_path = 'models/stanford_tidybot/scene.xml'
         self.render_images = render_images
@@ -354,6 +356,7 @@ class MujocoEnv:
         self.command_queue = mp.Queue(1)
         self.table_scene = table_scene
         self.drawer_scene = drawer_scene
+        self.cupboard_scene = cupboard_scene
 
         # Shared memory for state observations
         self.shm_state = ShmState()

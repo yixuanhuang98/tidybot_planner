@@ -758,3 +758,13 @@ class MotionPlannerPolicyStackDrawer(MotionPlannerPolicyStack):
             return 0.45  # Reduced from 0.55 to 0.45 for drawer scene
         return {'toss': 1.10, 'shelf': 0.60, 'drawer': 0.45}.get(primitive_name, 0.45)
         
+
+# Cupboard stacking policy - inherits from MotionPlannerPolicyStack but adjusts placement height for the cupboard environment
+class MotionPlannerPolicyStackCupboard(MotionPlannerPolicyStack):
+    """
+    Stacking policy for the cupboard environment. Adjusts stacking height and approach for cubes on the ground in front of a cupboard.
+    """
+    def __init__(self):
+        super().__init__()
+        # For the cupboard scene, cubes are on the ground (z ~ 0.05), so stack height is just above a cube
+        
