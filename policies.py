@@ -1136,6 +1136,60 @@ class MotionPlannerPolicyMPWrapper(Policy):
     def step(self, obs):
         return self.impl.step(obs)
 
+# Motion planner policy for cupboard environment
+class MotionPlannerPolicyMPCupboardWrapper(Policy):
+    def __init__(self):
+        self.impl = MotionPlannerPolicyMP(cupboard_mode=True)
+        self.impl.PLACEMENT_X_OFFSET = 0.1
+        self.impl.PLACEMENT_Y_OFFSET = 0.1
+        self.impl.PLACEMENT_Z_OFFSET = 0.5
+        self.impl.target_location = np.array([0.8, 0, 0.5])
+    def reset(self):
+        self.impl.reset()
+    def step(self, obs):
+        return self.impl.step(obs)
+
+# Motion planner policy for three sequential placements
+class MotionPlannerPolicyMPThreeWrapper(Policy):
+    def __init__(self):
+        self.mp1 = MotionPlannerPolicyMP(cupboard_mode=True)
+        self.mp1.target_location = np.array([0.8, 0, 0.5])
+        self.mp2 = MotionPlannerPolicyMP(cupboard_mode=True)
+        self.mp2.target_location = np.array([0.8, -0.1, 0.5])
+        self.mp3 = MotionPlannerPolicyMP(cupboard_mode=True)
+        self.mp3.target_location = np.array([0.8, 0.1, 0.5])
+        self.phase = 0
+        self.episode_ended = False
+    def reset(self):
+        self.mp1.reset()
+        self.mp2.reset()
+        self.mp3.reset()
+        self.phase = 0
+        self.episode_ended = False
+    def step(self, obs):
+        if self.episode_ended:
+            return None
+        if self.phase == 0:
+            action = self.mp1.step(obs)
+            if getattr(self.mp1, 'episode_ended', False):
+                self.phase = 1
+                self.mp2.reset()
+            return action
+        elif self.phase == 1:
+            action = self.mp2.step(obs)
+            if getattr(self.mp2, 'episode_ended', False):
+                self.phase = 2
+                self.mp3.reset()
+            return action
+        elif self.phase == 2:
+            action = self.mp3.step(obs)
+            if getattr(self.mp3, 'episode_ended', False):
+                self.phase = 3
+                self.episode_ended = True
+            return action
+        else:
+            return None
+
 if __name__ == '__main__':
     # WebServer(Queue()).run(); time.sleep(1000)
     # WebXRListener(); time.sleep(1000)
