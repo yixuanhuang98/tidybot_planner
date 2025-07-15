@@ -739,3 +739,22 @@ class MotionPlannerPolicyStackTable(MotionPlannerPolicyStack):
             return 0.45  # Reduced from 0.55 to 0.45 for larger reachable space on table
         return {'toss': 1.20, 'shelf': 0.65, 'drawer': 0.70}.get(primitive_name, 0.45)
         
+
+# Drawer stacking policy - inherits from MotionPlannerPolicyStack but adjusts placement height for the drawer environment
+class MotionPlannerPolicyStackDrawer(MotionPlannerPolicyStack):
+    """
+    Stacking policy for the drawer environment. Adjusts stacking height and approach for cubes on the ground or in cubbies.
+    """
+    def __init__(self):
+        super().__init__()
+        # For the drawer scene, cubes are on the ground (z ~ 0.02), so stack height is just above a cube
+        self.STACK_HEIGHT_OFFSET = 0.04  # 4cm above the target cube for stacking in cubby/ground
+        self.PLACE_APPROACH_HEIGHT_OFFSET = 0.15  # 15cm above target for safe approach in drawer scene
+    
+    def get_end_effector_offset(self, primitive_name):
+        """Calculate end-effector offset for drawer environment - smaller offset for reachable space"""
+        gripper_open = True
+        if gripper_open:
+            return 0.45  # Reduced from 0.55 to 0.45 for drawer scene
+        return {'toss': 1.10, 'shelf': 0.60, 'drawer': 0.45}.get(primitive_name, 0.45)
+        

@@ -3,3 +3,6 @@ __pycache__
 .ipynb_checkpoints
 *.un~
 *.swp
+data/
+.gitignore
+simulation_images/
