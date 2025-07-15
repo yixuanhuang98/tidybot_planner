@@ -325,6 +325,26 @@ class MotionPlannerPolicyStack(BaseAgent):
                             if self.grasp_retries < self.MAX_GRASP_RETRIES:
                                 self.grasp_retries += 1
                                 print(f"Grasp failed after lift (gripper pos: {gripper_pos[0]:.3f}). Retrying grasp, attempt {self.grasp_retries}/{self.MAX_GRASP_RETRIES}.")
+                                
+                                # Update cube positions after grasp failure since they may have moved
+                                cube_info = self.detect_cubes_for_stacking(obs)
+                                if cube_info:
+                                    self.source_cube_location, self.target_cube_location = cube_info
+                                    # Update stack location with new target cube position
+                                    self.stack_location = np.array([
+                                        self.target_cube_location[0],  # Same X as target cube
+                                        self.target_cube_location[1],  # Same Y as target cube
+                                        self.target_cube_location[2] + self.STACK_HEIGHT_OFFSET  # Stack on top
+                                    ])
+                                    # Update the current command with new object position
+                                    self.current_command['object_3d_pos'] = self.source_cube_location.copy()
+                                    print(f"Updated cube positions after grasp failure:")
+                                    print(f"  Source cube: {self.source_cube_location}")
+                                    print(f"  Target cube: {self.target_cube_location}")
+                                    print(f"  Stack location: {self.stack_location}")
+                                else:
+                                    print("Warning: Could not detect cubes after grasp failure")
+                                
                                 self.grasp_state = PickState.APPROACH
                             else:
                                 print(f"Grasp failed after {self.MAX_GRASP_RETRIES} retries. Aborting.")
@@ -716,6 +736,6 @@ class MotionPlannerPolicyStackTable(MotionPlannerPolicyStack):
         # Simplified version - assume gripper starts open
         gripper_open = True  
         if gripper_open:
-            return 0.6  # Reduced from 0.55 to 0.45 for larger reachable space on table
-        return {'toss': 1.20, 'shelf': 0.65, 'drawer': 0.70}.get(primitive_name, 0.6)
+            return 0.45  # Reduced from 0.55 to 0.45 for larger reachable space on table
+        return {'toss': 1.20, 'shelf': 0.65, 'drawer': 0.70}.get(primitive_name, 0.45)
         

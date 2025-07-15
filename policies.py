@@ -1008,7 +1008,7 @@ class MotionPlannerPolicyStackTableThreeWrapper(Policy):
                     # The new stack height should be one cube height above the previous stack
                     # Assume cube height is the same as stack1.STACK_HEIGHT_OFFSET
                     cube_height = self.stack1.STACK_HEIGHT_OFFSET
-                    self.stack2.STACK_HEIGHT_OFFSET = 1.5 * cube_height  # Stack third cube on top of second
+                    self.stack2.STACK_HEIGHT_OFFSET = 1.8 * cube_height  # Stack third cube on top of second
                 self.phase = 1
                 self.stack2.reset()  # Ensure stack2 is ready
             return action
