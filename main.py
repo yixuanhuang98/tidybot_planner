@@ -122,6 +122,9 @@ def main(args):
     elif args.motion_planner:
         from policies import MotionPlannerPolicy
         policy = MotionPlannerPolicy()
+    elif args.mp_policy:
+        from policies import MotionPlannerPolicyMPWrapper
+        policy = MotionPlannerPolicyMPWrapper()
     elif args.teleop:
         from policies import TeleopPolicy
         policy = TeleopPolicy()
@@ -141,6 +144,7 @@ if __name__ == '__main__':
     parser.add_argument('--sim', action='store_true')
     parser.add_argument('--teleop', action='store_true')
     parser.add_argument('--motion_planner', action='store_true')
+    parser.add_argument('--mp_policy', action='store_true', help='Enable new motion planner policy from agent/mp_policy.py')
     parser.add_argument('--stack_policy', action='store_true', help='Enable stacking policy (stack cubes)')
     parser.add_argument('--stack_policy_three', action='store_true', help='Enable stacking policy (stack three cubes) - works with both ground and table scenes')
     parser.add_argument('--table_scene', action='store_true', help='Use table scene with three cubes')

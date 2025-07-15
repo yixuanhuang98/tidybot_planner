@@ -1,370 +1,37 @@
-# Author: Jimmy Wu
-# Date: October 2024
-
-import logging
 import math
-import socket
-import threading
 import time
-from queue import Queue
-import cv2 as cv
 import numpy as np
-import zmq
-from flask import Flask, render_template
-from flask_socketio import SocketIO, emit
-from scipy.spatial.transform import Rotation as R
-from constants import POLICY_SERVER_HOST, POLICY_SERVER_PORT, POLICY_IMAGE_WIDTH, POLICY_IMAGE_HEIGHT
-from enum import Enum, auto
-from agent.stack_policies import MotionPlannerPolicyStack  # <-- Add this import
-from agent.stack_policies import MotionPlannerPolicyStackTable  # <-- Add this import for table stacking
-from agent.stack_policies import MotionPlannerPolicyStackDrawer  # <-- Add this import for drawer stacking
-from agent.stack_policies import MotionPlannerPolicyStackCupboard  # <-- Add this import for cupboard stacking
-from agent.mp_policy import MotionPlannerPolicy as MotionPlannerPolicyMP  # Import new MP policy
+from enum import Enum
 
-class Policy:
-    def reset(self):
-        raise NotImplementedError
+# Import BaseAgent base class
+from .base_agent import BaseAgent
 
-    def step(self, obs):
-        raise NotImplementedError
-
-class WebServer:
-    def __init__(self, queue):
-        self.app = Flask(__name__)
-        self.socketio = SocketIO(self.app)
-        self.queue = queue
-
-        @self.app.route('/')
-        def index():
-            return render_template('index.html')
-
-        @self.socketio.on('message')
-        def handle_message(data):
-            # Send the timestamp back for RTT calculation (expected RTT on 5 GHz Wi-Fi is 7 ms)
-            emit('echo', data['timestamp'])
-
-            # Add data to queue for processing
-            self.queue.put(data)
-
-        # Reduce verbose Flask log output
-        logging.getLogger('werkzeug').setLevel(logging.WARNING)
-
-    def run(self):
-        # Get IP address
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(0)
-        try:
-            s.connect(('8.8.8.8', 1))
-            address = s.getsockname()[0]
-        except Exception:
-            address = '127.0.0.1'
-        finally:
-            s.close()
-        print(f'Starting server at {address}:5000')
-        self.socketio.run(self.app, host='0.0.0.0')
-
-DEVICE_CAMERA_OFFSET = np.array([0.0, 0.02, -0.04])  # iPhone 14 Pro
-
-# Convert coordinate system from WebXR to robot
-def convert_webxr_pose(pos, quat):
-    # WebXR: +x right, +y up, +z back; Robot: +x forward, +y left, +z up
-    pos = np.array([-pos['z'], -pos['x'], pos['y']], dtype=np.float64)
-    rot = R.from_quat([-quat['z'], -quat['x'], quat['y'], quat['w']])
-
-    # Apply offset so that rotations are around device center instead of device camera
-    pos = pos + rot.apply(DEVICE_CAMERA_OFFSET)
-
-    return pos, rot
-
-TWO_PI = 2 * math.pi
-
-class TeleopController:
-    def __init__(self):
-        # Teleop device IDs
-        self.primary_device_id = None    # Primary device controls either the arm or the base
-        self.secondary_device_id = None  # Optional secondary device controls the base
-        self.enabled_counts = {}
-
-        # Mobile base pose
-        self.base_pose = None
-
-        # Teleop targets
-        self.targets_initialized = False
-        self.base_target_pose = None
-        self.arm_target_pos = None
-        self.arm_target_rot = None
-        self.gripper_target_pos = None
-
-        # WebXR reference poses
-        self.base_xr_ref_pos = None
-        self.base_xr_ref_rot_inv = None
-        self.arm_xr_ref_pos = None
-        self.arm_xr_ref_rot_inv = None
-
-        # Robot reference poses
-        self.base_ref_pose = None
-        self.arm_ref_pos = None
-        self.arm_ref_rot = None
-        self.arm_ref_base_pose = None  # For optional secondary control of base
-        self.gripper_ref_pos = None
-
-    def process_message(self, data):
-        if not self.targets_initialized:
-            return
-
-        # Use device ID to disambiguate between primary and secondary devices
-        device_id = data['device_id']
-
-        # Update enabled count for the device that sent this message
-        self.enabled_counts[device_id] = self.enabled_counts.get(device_id, 0) + 1 if 'teleop_mode' in data else 0
-
-        # Assign primary and secondary devices
-        if self.enabled_counts[device_id] > 2:
-            if self.primary_device_id is None and device_id != self.secondary_device_id:
-                # Note: We skip the first 2 steps because WebXR pose updates have higher latency than touch events
-                self.primary_device_id = device_id
-            elif self.secondary_device_id is None and device_id != self.primary_device_id:
-                self.secondary_device_id = device_id
-        elif self.enabled_counts[device_id] == 0:
-            if device_id == self.primary_device_id:
-                self.primary_device_id = None  # Primary device no longer enabled
-                self.base_xr_ref_pos = None
-                self.arm_xr_ref_pos = None
-            elif device_id == self.secondary_device_id:
-                self.secondary_device_id = None
-                self.base_xr_ref_pos = None
-
-        # Teleop is enabled
-        if self.primary_device_id is not None and 'teleop_mode' in data:
-            pos, rot = convert_webxr_pose(data['position'], data['orientation'])
-
-            # Base movement
-            if data['teleop_mode'] == 'base' or device_id == self.secondary_device_id:  # Note: Secondary device can only control base
-                # Store reference poses
-                if self.base_xr_ref_pos is None:
-                    self.base_ref_pose = self.base_pose.copy()
-                    self.base_xr_ref_pos = pos[:2]
-                    self.base_xr_ref_rot_inv = rot.inv()
-
-                # Position
-                self.base_target_pose[:2] = self.base_ref_pose[:2] + (pos[:2] - self.base_xr_ref_pos)
-
-                # Orientation
-                base_fwd_vec_rotated = (rot * self.base_xr_ref_rot_inv).apply([1.0, 0.0, 0.0])
-                base_target_theta = self.base_ref_pose[2] + math.atan2(base_fwd_vec_rotated[1], base_fwd_vec_rotated[0])
-                self.base_target_pose[2] += (base_target_theta - self.base_target_pose[2] + math.pi) % TWO_PI - math.pi  # Unwrapped
-
-            # Arm movement
-            elif data['teleop_mode'] == 'arm':
-                # Store reference poses
-                if self.arm_xr_ref_pos is None:
-                    self.arm_xr_ref_pos = pos
-                    self.arm_xr_ref_rot_inv = rot.inv()
-                    self.arm_ref_pos = self.arm_target_pos.copy()
-                    self.arm_ref_rot = self.arm_target_rot
-                    self.arm_ref_base_pose = self.base_pose.copy()
-                    self.gripper_ref_pos = self.gripper_target_pos
-
-                # Rotations around z-axis to go between global frame (base) and local frame (arm)
-                z_rot = R.from_rotvec(np.array([0.0, 0.0, 1.0]) * self.base_pose[2])
-                z_rot_inv = z_rot.inv()
-                ref_z_rot = R.from_rotvec(np.array([0.0, 0.0, 1.0]) * self.arm_ref_base_pose[2])
-
-                # Position
-                pos_diff = pos - self.arm_xr_ref_pos  # WebXR
-                pos_diff += ref_z_rot.apply(self.arm_ref_pos) - z_rot.apply(self.arm_ref_pos)  # Secondary base control: Compensate for base rotation
-                pos_diff[:2] += self.arm_ref_base_pose[:2] - self.base_pose[:2]  # Secondary base control: Compensate for base translation
-                self.arm_target_pos = self.arm_ref_pos + z_rot_inv.apply(pos_diff)
-
-                # Orientation
-                self.arm_target_rot = (z_rot_inv * (rot * self.arm_xr_ref_rot_inv) * ref_z_rot) * self.arm_ref_rot
-
-                # Gripper position
-                self.gripper_target_pos = np.clip(self.gripper_ref_pos + data['gripper_delta'], 0.0, 1.0)
-
-        # Teleop is disabled
-        elif self.primary_device_id is None:
-            # Update target pose in case base is pushed while teleop is disabled
-            self.base_target_pose = self.base_pose
-
-    def step(self, obs):
-        # Update robot state
-        self.base_pose = obs['base_pose']
-
-        # Initialize targets
-        if not self.targets_initialized:
-            self.base_target_pose = obs['base_pose']
-            self.arm_target_pos = obs['arm_pos']
-            self.arm_target_rot = R.from_quat(obs['arm_quat'])
-            self.gripper_target_pos = obs['gripper_pos']
-            self.targets_initialized = True
-
-        # Return no action if teleop is not enabled
-        if self.primary_device_id is None:
-            return None
-
-        # Get most recent teleop command
-        arm_quat = self.arm_target_rot.as_quat()
-        if arm_quat[3] < 0.0:  # Enforce quaternion uniqueness (Note: Not strictly necessary since policy training uses 6D rotation representation)
-            np.negative(arm_quat, out=arm_quat)
-        action = {
-            'base_pose': self.base_target_pose.copy(),
-            'arm_pos': self.arm_target_pos.copy(),
-            'arm_quat': arm_quat,
-            'gripper_pos': self.gripper_target_pos.copy(),
-        }
-
-        return action
-
-# Teleop using WebXR phone web app
-class TeleopPolicy(Policy):
-    def __init__(self):
-        self.web_server_queue = Queue()
-        self.teleop_controller = None
-        self.teleop_state = None  # States: episode_started -> episode_ended -> reset_env
-        self.episode_ended = False
-
-        # Web server for serving the WebXR phone web app
-        server = WebServer(self.web_server_queue)
-        threading.Thread(target=server.run, daemon=True).start()
-
-        # Listener thread to process messages from WebXR client
-        threading.Thread(target=self.listener_loop, daemon=True).start()
-
-    def reset(self):
-        self.teleop_controller = TeleopController()
-        self.episode_ended = False
-
-        # Wait for user to signal that episode has started
-        self.teleop_state = None
-        while self.teleop_state != 'episode_started':
-            time.sleep(0.01)
-
-    def step(self, obs):
-        # Signal that user has ended episode
-        if not self.episode_ended and self.teleop_state == 'episode_ended':
-            self.episode_ended = True
-            return 'end_episode'
-
-        # Signal that user is ready for env reset (after ending the episode)
-        if self.teleop_state == 'reset_env':
-            return 'reset_env'
-
-        return self._step(obs)
-
-    def _step(self, obs):
-        return self.teleop_controller.step(obs)
-
-    def listener_loop(self):
-        while True:
-            if not self.web_server_queue.empty():
-                data = self.web_server_queue.get()
-
-                # Update state
-                if 'state_update' in data:
-                    self.teleop_state = data['state_update']
-
-                # Process message if not stale
-                elif 1000 * time.time() - data['timestamp'] < 250:  # 250 ms
-                    self._process_message(data)
-
-            time.sleep(0.001)
-
-    def _process_message(self, data):
-        self.teleop_controller.process_message(data)
-
-# Execute policy running on remote server
-class RemotePolicy(TeleopPolicy):
-    def __init__(self):
-        super().__init__()
-
-        # Use phone as enabling device during policy rollout
-        self.enabled = False
-
-        # Connection to policy server
-        context = zmq.Context()
-        self.socket = context.socket(zmq.REQ)
-        self.socket.connect(f'tcp://{POLICY_SERVER_HOST}:{POLICY_SERVER_PORT}')
-        print(f'Connected to policy server at {POLICY_SERVER_HOST}:{POLICY_SERVER_PORT}')
-
-    def reset(self):
-        # Wait for user to signal that episode has started
-        super().reset()  # Note: Comment out to run without phone
-
-        # Check connection to policy server and reset policy
-        default_timeout = self.socket.getsockopt(zmq.RCVTIMEO)
-        self.socket.setsockopt(zmq.RCVTIMEO, 1000)  # Temporarily set 1000 ms timeout
-        self.socket.send_pyobj({'reset': True})
-        try:
-            self.socket.recv_pyobj()  # Note: Not secure. Only unpickle data you trust.
-        except zmq.error.Again as e:
-            raise Exception('Could not communicate with policy server') from e
-        self.socket.setsockopt(zmq.RCVTIMEO, default_timeout)  # Put default timeout back
-
-        # Disable policy execution until user presses on screen
-        self.enabled = False  # Note: Set to True to run without phone
-
-    def _step(self, obs):
-        # Return teleop command if episode has ended
-        if self.episode_ended:
-            return self.teleop_controller.step(obs)
-
-        # Return no action if robot is not enabled
-        if not self.enabled:
-            return None
-
-        # Encode images
-        encoded_obs = {}
-        for k, v in obs.items():
-            if v.ndim == 3:
-                # Resize image to resolution expected by policy server
-                v = cv.resize(v, (POLICY_IMAGE_WIDTH, POLICY_IMAGE_HEIGHT))
-
-                # Encode image as JPEG
-                _, v = cv.imencode('.jpg', v)  # Note: Interprets RGB as BGR
-                encoded_obs[k] = v
-            else:
-                encoded_obs[k] = v
-
-        # Send obs to policy server
-        req = {'obs': encoded_obs}
-        self.socket.send_pyobj(req)
-
-        # Get action from policy server
-        rep = self.socket.recv_pyobj()  # Note: Not secure. Only unpickle data you trust.
-        action = rep['action']
-
-        return action
-
-    def _process_message(self, data):
-        if self.episode_ended:
-            # Run teleop controller if episode has ended
-            self.teleop_controller.process_message(data)
-        else:
-            # Enable policy execution if user is pressing on screen
-            self.enabled = 'teleop_mode' in data
 
 class PickState(Enum):
-    APPROACH = auto()
-    LOWER = auto()
-    GRASP = auto()
-    LIFT = auto()
+    APPROACH = "approach"
+    LOWER = "lower"
+    GRASP = "grasp"
+    LIFT = "lift"
+
 
 class PlaceState(Enum):
-    APPROACH = auto()
-    RELEASE = auto()
+    APPROACH = "approach"
+    RELEASE = "release"
+
 
 # Motion Planner generated plan. 
-class MotionPlannerPolicy(Policy):
+class MotionPlannerPolicy(BaseAgent):
     # Base following parameters (from BaseController)
     LOOKAHEAD_DISTANCE = 0.3  # 30 cm
     POSITION_TOLERANCE = 0.005  # 0.5 cm (reduced from 1.5 cm)
     HEADING_TOLERANCE = math.radians(2.1)  # 2.1 degrees
     GRASP_BASE_TOLERANCE = 0.002  # 0.2 cm for grasp
     PLACE_BASE_TOLERANCE = 0.02   # 1.0 cm for placement (example, adjust as needed)
-
+    
     # Object and target locations
-    PLACEMENT_X_OFFSET = 0.5  # 50cm in X direction
+    PLACEMENT_X_OFFSET = 1.0 # 0.5  # 50cm in X direction
+    PLACEMENT_Y_OFFSET = 0.3
+    PLACEMENT_Z_OFFSET = 0
 
     # Manipulation parameters
     ROBOT_BASE_HEIGHT = 0.48
@@ -454,8 +121,8 @@ class MotionPlannerPolicy(Policy):
                 # Set placement location relative to detected object (e.g., 50cm away)
                 self.target_location = np.array([
                     self.object_location[0] + self.PLACEMENT_X_OFFSET,  # 50cm in X direction
-                    self.object_location[1],        # Same Y as object
-                    self.object_location[2]         # Same Z as object (table height)
+                    self.object_location[1] + self.PLACEMENT_Y_OFFSET,        # Same Y as object
+                    self.object_location[2] + self.PLACEMENT_Z_OFFSET,         # Same Z as object (table height)
                 ])
                 
                 pick_command = {
@@ -497,16 +164,16 @@ class MotionPlannerPolicy(Policy):
                     end_effector_offset = self.get_end_effector_offset(self.current_command['primitive_name'])
                     diff = abs(end_effector_offset - distance_to_target)
                     print(f"Distance to target EE: {distance_to_target:.3f}, EE offset: {end_effector_offset:.3f}, diff: {diff:.3f}")
-                    # Set tolerance based on current command type
                     if self.current_command['primitive_name'] == 'pick':
                         base_tolerance = self.GRASP_BASE_TOLERANCE
                     else:
                         base_tolerance = self.PLACE_BASE_TOLERANCE
                     if diff < base_tolerance:
+                    # if diff < 0.002:  # 0.2 cm tolerance (reduced from 10 cm)
                         self.state = 'manipulating'
                         print("Base reached target, starting arm manipulation")
                     else:
-                        print(f'Too far from target end effector position ({{(100 * diff):.1f}} cm)')
+                        print(f'Too far from target end effector position ({(100 * diff):.1f} cm)')
                         self.state = 'idle'
                 else:
                     self.state = 'idle'
@@ -884,7 +551,9 @@ class MotionPlannerPolicy(Policy):
 
         # Base movement only
         if command['primitive_name'] == 'move':
-            return {'waypoints': command['waypoints'], 'target_ee_pos': None, 'position_tolerance': 0.1}
+            return {'waypoints': command['waypoints'], 
+                    'target_ee_pos': None, 
+                    'position_tolerance': 0.1}
 
         # Modify waypoints so that the end effector is placed at the target end effector position
         target_ee_pos = command['waypoints'][-1]
@@ -916,242 +585,5 @@ class MotionPlannerPolicy(Policy):
             target_position = (curr_position[0] + signed_dist * math.cos(target_heading), curr_position[1] + signed_dist * math.sin(target_heading))
             waypoints = [curr_position, target_position]
             
-        return {'waypoints': waypoints, 'target_ee_pos': target_ee_pos}
-
-# Stacking motion planner policy (stacking three objects)
-class MotionPlannerPolicyStackWrapper(Policy):
-    def __init__(self):
-        self.impl = MotionPlannerPolicyStack()
-    def reset(self):
-        self.impl.reset()
-    def step(self, obs):
-        return self.impl.step(obs)
-
-# Stacking three cubes using two sequential stack policies
-class MotionPlannerPolicyStackThreeWrapper(Policy):
-    def __init__(self):
-        self.stack1 = MotionPlannerPolicyStack()
-        self.stack2 = MotionPlannerPolicyStack()
-        self.phase = 0  # 0: first stack, 1: second stack, 2: done
-        self.episode_ended = False
-
-    def reset(self):
-        self.stack1.reset()
-        self.stack2.reset()
-        self.phase = 0
-        self.episode_ended = False
-
-    def step(self, obs):
-        if self.episode_ended:
-            return None
-
-        # Phase 0: stack first two cubes
-        if self.phase == 0:
-            action = self.stack1.step(obs)
-            if self.stack1.episode_ended:
-                # Prepare for second stacking: adjust stack2's placement height
-                # Find the current top cube's position and set stack2's STACK_HEIGHT_OFFSET
-                # We'll use the same logic as stack1, but increase the offset
-                # Get the last stack location from stack1
-                if hasattr(self.stack1, 'stack_location') and self.stack1.stack_location is not None:
-                    # The new stack height should be one cube height above the previous stack
-                    # Assume cube height is the same as stack1.STACK_HEIGHT_OFFSET
-                    cube_height = self.stack1.STACK_HEIGHT_OFFSET
-                    self.stack2.STACK_HEIGHT_OFFSET = 1.5 * cube_height
-                self.phase = 1
-                self.stack2.reset()  # Ensure stack2 is ready
-            return action
-        # Phase 1: stack third cube on top
-        elif self.phase == 1:
-            action = self.stack2.step(obs)
-            if self.stack2.episode_ended:
-                self.phase = 2
-                self.episode_ended = True
-            return action
-        # Phase 2: done
-        else:
-            return None
-
-# Table stacking policy wrapper
-class MotionPlannerPolicyStackTableWrapper(Policy):
-    def __init__(self):
-        self.impl = MotionPlannerPolicyStackTable()
-    def reset(self):
-        self.impl.reset()
-    def step(self, obs):
-        return self.impl.step(obs)
-
-# Table stacking three cubes using two sequential table stack policies
-class MotionPlannerPolicyStackTableThreeWrapper(Policy):
-    def __init__(self):
-        self.stack1 = MotionPlannerPolicyStackTable()
-        self.stack2 = MotionPlannerPolicyStackTable()
-        self.phase = 0  # 0: first stack, 1: second stack, 2: done
-        self.episode_ended = False
-
-    def reset(self):
-        self.stack1.reset()
-        self.stack2.reset()
-        self.phase = 0
-        self.episode_ended = False
-
-    def step(self, obs):
-        if self.episode_ended:
-            return None
-
-        # Phase 0: stack first two cubes
-        if self.phase == 0:
-            action = self.stack1.step(obs)
-            if self.stack1.episode_ended:
-                # Prepare for second stacking: adjust stack2's placement height
-                # Find the current top cube's position and set stack2's STACK_HEIGHT_OFFSET
-                # We'll use the same logic as stack1, but increase the offset
-                # Get the last stack location from stack1
-                if hasattr(self.stack1, 'stack_location') and self.stack1.stack_location is not None:
-                    # The new stack height should be one cube height above the previous stack
-                    # Assume cube height is the same as stack1.STACK_HEIGHT_OFFSET
-                    cube_height = self.stack1.STACK_HEIGHT_OFFSET
-                    self.stack2.STACK_HEIGHT_OFFSET = 1.8 * cube_height  # Stack third cube on top of second
-                self.phase = 1
-                self.stack2.reset()  # Ensure stack2 is ready
-            return action
-        # Phase 1: stack third cube on top
-        elif self.phase == 1:
-            action = self.stack2.step(obs)
-            if self.stack2.episode_ended:
-                self.phase = 2
-                self.episode_ended = True
-            return action
-        # Phase 2: done
-        else:
-            return None
-
-# Drawer stacking policy wrapper
-class MotionPlannerPolicyStackDrawerWrapper(Policy):
-    def __init__(self):
-        self.impl = MotionPlannerPolicyStackDrawer()
-    def reset(self):
-        self.impl.reset()
-    def step(self, obs):
-        return self.impl.step(obs)
-
-# Drawer stacking three cubes using two sequential drawer stack policies
-class MotionPlannerPolicyStackDrawerThreeWrapper(Policy):
-    def __init__(self):
-        self.stack1 = MotionPlannerPolicyStackDrawer()
-        self.stack2 = MotionPlannerPolicyStackDrawer()
-        self.phase = 0  # 0: first stack, 1: second stack, 2: done
-        self.episode_ended = False
-
-    def reset(self):
-        self.stack1.reset()
-        self.stack2.reset()
-        self.phase = 0
-        self.episode_ended = False
-
-    def step(self, obs):
-        if self.episode_ended:
-            return None
-
-        # Phase 0: stack first two cubes
-        if self.phase == 0:
-            action = self.stack1.step(obs)
-            if self.stack1.episode_ended:
-                # Prepare for second stacking: adjust stack2's placement height
-                if hasattr(self.stack1, 'stack_location') and self.stack1.stack_location is not None:
-                    cube_height = self.stack1.STACK_HEIGHT_OFFSET
-                    self.stack2.STACK_HEIGHT_OFFSET = 1.8 * cube_height  # Stack third cube on top of second
-                self.phase = 1
-                self.stack2.reset()  # Ensure stack2 is ready
-            return action
-        # Phase 1: stack third cube on top
-        elif self.phase == 1:
-            action = self.stack2.step(obs)
-            if self.stack2.episode_ended:
-                self.phase = 2
-                self.episode_ended = True
-            return action
-        # Phase 2: done
-        else:
-            return None
-
-# Cupboard stacking policy wrapper
-class MotionPlannerPolicyStackCupboardWrapper(Policy):
-    def __init__(self):
-        self.impl = MotionPlannerPolicyStackCupboard()
-    def reset(self):
-        self.impl.reset()
-    def step(self, obs):
-        return self.impl.step(obs)
-
-# Cupboard stacking three cubes using two sequential cupboard stack policies
-class MotionPlannerPolicyStackCupboardThreeWrapper(Policy):
-    def __init__(self):
-        self.stack1 = MotionPlannerPolicyStackCupboard()
-        self.stack2 = MotionPlannerPolicyStackCupboard()
-        self.phase = 0  # 0: first stack, 1: second stack, 2: done
-        self.episode_ended = False
-
-    def reset(self):
-        self.stack1.reset()
-        self.stack2.reset()
-        self.phase = 0
-        self.episode_ended = False
-
-    def step(self, obs):
-        if self.episode_ended:
-            return None
-
-        # Phase 0: stack first two cubes
-        if self.phase == 0:
-            action = self.stack1.step(obs)
-            if self.stack1.episode_ended:
-                # Prepare for second stacking: adjust stack2's placement height
-                if hasattr(self.stack1, 'stack_location') and self.stack1.stack_location is not None:
-                    cube_height = self.stack1.STACK_HEIGHT_OFFSET
-                    self.stack2.STACK_HEIGHT_OFFSET = 1.8 * cube_height  # Stack third cube on top of second
-                self.phase = 1
-                self.stack2.reset()  # Ensure stack2 is ready
-            return action
-        # Phase 1: stack third cube on top
-        elif self.phase == 1:
-            action = self.stack2.step(obs)
-            if self.stack2.episode_ended:
-                self.phase = 2
-                self.episode_ended = True
-            return action
-        # Phase 2: done
-        else:
-            return None
-
-# Motion planner policy from mp_policy.py (agent)
-class MotionPlannerPolicyMPWrapper(Policy):
-    def __init__(self):
-        self.impl = MotionPlannerPolicyMP()
-        self.impl.PLACEMENT_X_OFFSET = 0.1
-        self.impl.PLACEMENT_Y_OFFSET = 0.1
-        self.impl.PLACEMENT_Z_OFFSET = 0.2
-    def reset(self):
-        self.impl.reset()
-    def step(self, obs):
-        return self.impl.step(obs)
-
-if __name__ == '__main__':
-    # WebServer(Queue()).run(); time.sleep(1000)
-    # WebXRListener(); time.sleep(1000)
-    from constants import POLICY_CONTROL_PERIOD
-    obs = {
-        'base_pose': np.zeros(3),
-        'arm_pos': np.zeros(3),
-        'arm_quat': np.array([0.0, 0.0, 0.0, 1.0]),
-        'gripper_pos': np.zeros(1),
-        'base_image': np.zeros((640, 360, 3)),
-        'wrist_image': np.zeros((640, 480, 3)),
-    }
-    policy = TeleopPolicy()
-    # policy = RemotePolicy()
-    while True:
-        policy.reset()
-        for _ in range(100):
-            print(policy.step(obs))
-            time.sleep(POLICY_CONTROL_PERIOD)  # Note: Not precise
+        return {'waypoints': waypoints, 
+                'target_ee_pos': target_ee_pos} 
