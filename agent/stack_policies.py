@@ -438,7 +438,7 @@ class MotionPlannerPolicyStack(BaseAgent):
 
                     print(f"Step 1: Moving to safe approach position (20cm above target cube)")
                     print(f"Target arm pos: {target_arm_pos}, Current arm pos: {arm_pos}")
-                    print(f"Position error: {np.linalg.norm(arm_pos[:2] - target_arm_pos[:2]):.4f}m")
+                    print(f"Position error: {np.linalg.norm(arm_pos - target_arm_pos):.4f}m")
                     if np.allclose(arm_pos[:2], target_arm_pos[:2], atol=0.02):  # 2cm tolerance for approach
                         self.grasp_state = PlaceState.LOWER_TO_PLACE
                         print("Reached safe approach position, now lowering to placement height")
@@ -451,8 +451,8 @@ class MotionPlannerPolicyStack(BaseAgent):
 
                     print(f"Step 2: Lowering to final placement position (10cm above target cube)")
                     print(f"Target arm pos: {target_arm_pos}, Current arm pos: {arm_pos}")
-                    print(f"Position error: {np.linalg.norm(arm_pos[:3] - target_arm_pos[:3]):.4f}m")
-                    if np.allclose(arm_pos[:3], target_arm_pos[:3], atol=0.01):  # 1cm tolerance for precise placement
+                    print(f"Position error: {np.linalg.norm(arm_pos - target_arm_pos):.4f}m")
+                    if np.allclose(arm_pos, target_arm_pos, atol=0.01):  # 1cm tolerance for precise placement
                         self.grasp_state = PlaceState.RELEASE
                         print("Arm positioned at final placement height, opening gripper")
                 
@@ -709,6 +709,13 @@ class MotionPlannerPolicyStackTable(MotionPlannerPolicyStack):
         # The table height is 0.4m, and cubes are placed at 0.44m (table + 0.04m)
         # For stacking on table, we need to account for the table height
         self.STACK_HEIGHT_OFFSET = 0.04  # 4cm above the target cube for stacking on table
-        self.PLACE_APPROACH_HEIGHT_OFFSET = 0.17  # 15cm above target for safer approach on table
+        self.PLACE_APPROACH_HEIGHT_OFFSET = 0.20  # 14cm above target for safer approach on table
         
-        print(f'Table stacking policy initialized - STACK_HEIGHT_OFFSET: {self.STACK_HEIGHT_OFFSET}m, PLACE_APPROACH_HEIGHT_OFFSET: {self.PLACE_APPROACH_HEIGHT_OFFSET}m') 
+    def get_end_effector_offset(self, primitive_name):
+        """Calculate end-effector offset for table environment - smaller offset for larger reachable space"""
+        # Simplified version - assume gripper starts open
+        gripper_open = True  
+        if gripper_open:
+            return 0.6  # Reduced from 0.55 to 0.45 for larger reachable space on table
+        return {'toss': 1.20, 'shelf': 0.65, 'drawer': 0.70}.get(primitive_name, 0.6)
+        

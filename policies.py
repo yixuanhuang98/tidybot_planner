@@ -954,7 +954,7 @@ class MotionPlannerPolicyStackThreeWrapper(Policy):
                     # The new stack height should be one cube height above the previous stack
                     # Assume cube height is the same as stack1.STACK_HEIGHT_OFFSET
                     cube_height = self.stack1.STACK_HEIGHT_OFFSET
-                    self.stack2.STACK_HEIGHT_OFFSET = 2 * cube_height
+                    self.stack2.STACK_HEIGHT_OFFSET = 1.5 * cube_height
                 self.phase = 1
                 self.stack2.reset()  # Ensure stack2 is ready
             return action
@@ -977,6 +977,51 @@ class MotionPlannerPolicyStackTableWrapper(Policy):
         self.impl.reset()
     def step(self, obs):
         return self.impl.step(obs)
+
+# Table stacking three cubes using two sequential table stack policies
+class MotionPlannerPolicyStackTableThreeWrapper(Policy):
+    def __init__(self):
+        self.stack1 = MotionPlannerPolicyStackTable()
+        self.stack2 = MotionPlannerPolicyStackTable()
+        self.phase = 0  # 0: first stack, 1: second stack, 2: done
+        self.episode_ended = False
+
+    def reset(self):
+        self.stack1.reset()
+        self.stack2.reset()
+        self.phase = 0
+        self.episode_ended = False
+
+    def step(self, obs):
+        if self.episode_ended:
+            return None
+
+        # Phase 0: stack first two cubes
+        if self.phase == 0:
+            action = self.stack1.step(obs)
+            if self.stack1.episode_ended:
+                # Prepare for second stacking: adjust stack2's placement height
+                # Find the current top cube's position and set stack2's STACK_HEIGHT_OFFSET
+                # We'll use the same logic as stack1, but increase the offset
+                # Get the last stack location from stack1
+                if hasattr(self.stack1, 'stack_location') and self.stack1.stack_location is not None:
+                    # The new stack height should be one cube height above the previous stack
+                    # Assume cube height is the same as stack1.STACK_HEIGHT_OFFSET
+                    cube_height = self.stack1.STACK_HEIGHT_OFFSET
+                    self.stack2.STACK_HEIGHT_OFFSET = 1.5 * cube_height  # Stack third cube on top of second
+                self.phase = 1
+                self.stack2.reset()  # Ensure stack2 is ready
+            return action
+        # Phase 1: stack third cube on top
+        elif self.phase == 1:
+            action = self.stack2.step(obs)
+            if self.stack2.episode_ended:
+                self.phase = 2
+                self.episode_ended = True
+            return action
+        # Phase 2: done
+        else:
+            return None
 
 if __name__ == '__main__':
     # WebServer(Queue()).run(); time.sleep(1000)

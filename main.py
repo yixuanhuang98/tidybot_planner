@@ -95,7 +95,10 @@ def main(args):
         env = RealEnv()
 
     # Create policy
-    if args.table_scene and args.stack_policy:
+    if args.table_scene and args.stack_policy_three:
+        from policies import MotionPlannerPolicyStackTableThreeWrapper
+        policy = MotionPlannerPolicyStackTableThreeWrapper()
+    elif args.table_scene and args.stack_policy:
         from policies import MotionPlannerPolicyStackTableWrapper
         policy = MotionPlannerPolicyStackTableWrapper()
     elif args.stack_policy_three:
@@ -127,7 +130,7 @@ if __name__ == '__main__':
     parser.add_argument('--teleop', action='store_true')
     parser.add_argument('--motion_planner', action='store_true')
     parser.add_argument('--stack_policy', action='store_true', help='Enable stacking policy (stack cubes)')
-    parser.add_argument('--stack_policy_three', action='store_true', help='Enable stacking policy (stack three cubes)')
+    parser.add_argument('--stack_policy_three', action='store_true', help='Enable stacking policy (stack three cubes) - works with both ground and table scenes')
     parser.add_argument('--table_scene', action='store_true', help='Use table scene with three cubes')
     parser.add_argument('--save', action='store_true')
     parser.add_argument('--output-dir', default='data/demos')
