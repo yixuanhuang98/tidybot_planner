@@ -30,7 +30,7 @@
             <!-- Bottom -->
             <geom type="box" size="0.2 0.3 0.02" pos="0 0 0" rgba="0.95 0.92 0.8 1"/>
             <!-- Top -->
-            <geom type="box" size="0.2 0.3 0.02" pos="0 0 0.76" rgba="0.95 0.92 0.8 1"/>
+            <geom type="box" size="0.2 0.3 0.02" pos="0 0 0.36" rgba="0.95 0.92 0.8 1"/>
             <!-- Left Side -->
             <geom type="box" size="0.2 0.02 0.18" pos="0 -0.28 0.18" rgba="0.95 0.92 0.8 1"/>
             <!-- Right Side -->
@@ -43,7 +43,7 @@
             <!-- Bottom -->
             <geom type="box" size="0.2 0.3 0.02" pos="0 0 0" rgba="0.95 0.92 0.8 1"/>
             <!-- Top -->
-            <geom type="box" size="0.2 0.3 0.02" pos="0 0 0.76" rgba="0.95 0.92 0.8 1"/>
+            <geom type="box" size="0.2 0.3 0.02" pos="0 0 0.36" rgba="0.95 0.92 0.8 1"/>
             <!-- Left Side -->
             <geom type="box" size="0.2 0.02 0.18" pos="0 -0.28 0.18" rgba="0.95 0.92 0.8 1"/>
             <!-- Right Side -->
@@ -53,17 +53,17 @@
         </body>
 
         <!-- Three cubes on the ground in front of the cabinet -->
-        <body name="cube1" pos="0.9 -0.6 0.3">
+        <body name="cube1" pos="0.9 -0.6 0.33">
             <freejoint/>
-            <geom type="box" size="0.02 0.02 0.02" rgba=".5 .7 .5 1" mass="0.1"/>
+            <geom type="box" size="0.02 0.02 0.06" rgba=".5 .7 .5 1" mass="0.1"/>
         </body>
-        <body name="cube2" pos="0.9 -0.5 0.3">
+        <body name="cube2" pos="0.9 -0.5 0.33">
             <freejoint/>
-            <geom type="box" size="0.02 0.02 0.02" rgba=".7 .5 .5 1" mass="0.1"/>
+            <geom type="box" size="0.02 0.02 0.06" rgba=".7 .5 .5 1" mass="0.1"/>
         </body>
-        <body name="cube3" pos="0.9 -0.4 0.3">
+        <body name="cube3" pos="0.9 -0.4 0.33">
             <freejoint/>
-            <geom type="box" size="0.02 0.02 0.02" rgba=".5 .5 .7 1" mass="0.1"/>
+            <geom type="box" size="0.02 0.02 0.06" rgba=".5 .5 .7 1" mass="0.1"/>
         </body>
 
         <!-- Overview camera -->

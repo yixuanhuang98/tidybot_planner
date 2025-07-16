@@ -92,7 +92,7 @@ def main(args):
         elif args.table_scene:
             env = MujocoEnv(table_scene=True)
         elif args.cupboard_scene:
-            if args.custom_grasp:
+            if args.custom_grasp or args.custom_grasp_three:
                 env = MujocoEnv(cupboard_scene=True, custom_grasp=True)
             else:
                 env = MujocoEnv(cupboard_scene=True)
@@ -139,6 +139,9 @@ def main(args):
     elif args.custom_grasp:
         from policies import MotionPlannerPolicyCustomGraspWrapper
         policy = MotionPlannerPolicyCustomGraspWrapper()
+    elif args.custom_grasp_three:
+        from policies import MotionPlannerPolicyCustomGraspThreeWrapper
+        policy = MotionPlannerPolicyCustomGraspThreeWrapper()
     elif args.teleop:
         from policies import TeleopPolicy
         policy = TeleopPolicy()
@@ -162,6 +165,7 @@ if __name__ == '__main__':
     parser.add_argument('--mp_policy_cupboard', action='store_true', help='Enable new motion planner policy (cupboard mode) from agent/mp_policy.py')
     parser.add_argument('--mp_policy_three', action='store_true', help='Enable new motion planner policy (three sequential placements) from agent/mp_policy.py')
     parser.add_argument('--custom_grasp', action='store_true', help='Enable custom grasping mode for experimentation')
+    parser.add_argument('--custom_grasp_three', action='store_true', help='Enable custom grasping mode for three sequential pick-place actions in cupboard environment')
     parser.add_argument('--stack_policy', action='store_true', help='Enable stacking policy (stack cubes)')
     parser.add_argument('--stack_policy_three', action='store_true', help='Enable stacking policy (stack three cubes) - works with both ground and table scenes')
     parser.add_argument('--table_scene', action='store_true', help='Use table scene with three cubes')

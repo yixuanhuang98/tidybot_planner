@@ -26,7 +26,6 @@ class MotionPlannerPolicy(BaseAgent):
     # Base following parameters (from BaseController)
     LOOKAHEAD_DISTANCE = 0.3  # 30 cm
     POSITION_TOLERANCE = 0.005  # 0.5 cm (reduced from 1.5 cm)
-    HEADING_TOLERANCE = math.radians(2.1)  # 2.1 degrees
     GRASP_BASE_TOLERANCE = 0.002  # 0.2 cm for grasp
     PLACE_BASE_TOLERANCE = 0.02   # 1.0 cm for placement (example, adjust as needed)
     
@@ -235,6 +234,8 @@ class MotionPlannerPolicy(BaseAgent):
                     print(f"Grasp state: {self.grasp_state}")
 
                     rotated_arm_quat = np.array([0.5, 0.5, 0.5, 0.5])
+                    # rotated_arm_quat = np.array([0.6532815, 0.6532815, 0.27059805, 0.27059805]) ## 45 degrees point downward.
+                    
                     
                     if self.grasp_state == PickState.APPROACH:
                         # Step 1: Position arm well above object with open gripper (safe approach)
@@ -429,13 +430,14 @@ class MotionPlannerPolicy(BaseAgent):
                         lifted_pos = object_relative_pos.copy()
                         lifted_pos[2] += (self.PICK_LIFT_DIST - self.PICK_LOWER_DIST) # Net lift
                         target_arm_pos = lifted_pos
-                        target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
+                        target_arm_quat = rotated_arm_quat # np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
                         target_gripper_pos = np.array([1.0])  # Gripper closed
 
                         print(f"Step 4: Lifting object... target height: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
                         if np.allclose(arm_pos, target_arm_pos, atol=0.05):  # 5cm tolerance
                             print("Object lifted successfully! Now moving to placement location.")
                             # Create place command
+
                             place_command = {
                                 'primitive_name': 'place',
                                 'waypoints': [base_pose[:2].tolist(), self.target_location[:2].tolist()],
@@ -861,7 +863,7 @@ class MotionPlannerPolicy(BaseAgent):
                 new_waypoint = (start[0] + t2 * d[0], start[1] + t2 * d[1])
                 break
                 
-        if new_waypoint is not None:
+        if new_waypoint is not None and not self.custom_grasp:
             # Discard all waypoints that are too close to target_ee_pos
             waypoints = reversed_waypoints[idx:][::-1] + [new_waypoint]
         else:
@@ -872,33 +874,16 @@ class MotionPlannerPolicy(BaseAgent):
             dx = target_ee_pos[0] - curr_position[0]
             dy = target_ee_pos[1] - curr_position[1]
             target_heading = self.restrict_heading_range(math.atan2(dy, dx))
-            target_position = (curr_position[0] + signed_dist * math.cos(target_heading), curr_position[1] + signed_dist * math.sin(target_heading))
-            waypoints = [curr_position, target_position]
+            if self.custom_grasp and self.cupboard_mode:
+                target_position = (target_ee_pos[0] - end_effector_offset, target_ee_pos[1])
+                middle_position = (target_ee_pos[0] - 1.0, target_ee_pos[1])
+                middle_position_1 = (curr_position[0] - 0.5, curr_position[1])
+                waypoints = [curr_position, middle_position_1,middle_position,target_position]
+            else:
+                target_position = (curr_position[0] + signed_dist * math.cos(target_heading), curr_position[1] + signed_dist * math.sin(target_heading))
+                waypoints = [curr_position, target_position]
+
         
-        # Add waypoints to ensure approach along +x direction
-        if len(waypoints) >= 2:
-            final_waypoint = waypoints[-1]
-            prev_waypoint = waypoints[-2]
-            
-            # Check if the final approach is along +x direction
-            approach_dx = final_waypoint[0] - prev_waypoint[0]
-            approach_dy = final_waypoint[1] - prev_waypoint[1]
-            
-            # If not approaching along +x direction, add intermediate waypoints
-            if abs(approach_dx) < abs(approach_dy) or approach_dx < 0:
-                print(f"Adding waypoints for +x approach. Current approach: dx={approach_dx:.3f}, dy={approach_dy:.3f}")
-                
-                # Create intermediate waypoints for +x approach
-                # First, move to the same Y coordinate as target, but further back in X
-                intermediate_x = final_waypoint[0] - end_effector_offset - 0.2  # 20cm further back
-                intermediate_y = final_waypoint[1]
-                intermediate_waypoint = (intermediate_x, intermediate_y)
-                
-                # Then move straight along +x to the final position
-                new_waypoints = waypoints[:-1] + [intermediate_waypoint, final_waypoint]
-                waypoints = new_waypoints
-                print(f"Added intermediate waypoint: {intermediate_waypoint}")
-                print(f"New waypoints: {waypoints}")
             
         return {'waypoints': waypoints, 
                 'target_ee_pos': target_ee_pos}

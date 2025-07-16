@@ -1201,6 +1201,9 @@ class MotionPlannerPolicyCustomGraspWrapper(Policy):
         self.impl.PLACEMENT_X_OFFSET = 0.1
         self.impl.PLACEMENT_Y_OFFSET = 0.1
         self.impl.PLACEMENT_Z_OFFSET = 0.5
+        self.impl.GRASP_SUCCESS_THRESHOLD = 0.75
+        self.impl.PICK_LOWER_DIST = 0.09
+        self.impl.PICK_LIFT_DIST = 0.18
         self.impl.target_location = np.array([0.8, 0, 0.5])
         print("Custom grasp policy initialized with experimental parameters")
         print("Designed for cupboard_scene_objects_inside.xml (objects already in cupboard)")
@@ -1208,6 +1211,77 @@ class MotionPlannerPolicyCustomGraspWrapper(Policy):
         self.impl.reset()
     def step(self, obs):
         return self.impl.step(obs)
+
+# Custom grasp policy wrapper for three sequential pick-place actions in cupboard environment
+class MotionPlannerPolicyCustomGraspThreeWrapper(Policy):
+    def __init__(self):
+        # Create three separate motion planner instances for sequential actions
+        self.mp1 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=True)
+        self.mp1.GRASP_SUCCESS_THRESHOLD = 0.75
+        self.mp1.PICK_LOWER_DIST = 0.09
+        self.mp1.PICK_LIFT_DIST = 0.18
+        self.mp1.target_location = np.array([0.85, 0.08, 0.38])  # Center position
+        
+        self.mp2 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=True)
+        self.mp2.GRASP_SUCCESS_THRESHOLD = 0.75
+        self.mp2.PICK_LOWER_DIST = 0.09
+        self.mp2.PICK_LIFT_DIST = 0.18
+        self.mp2.target_location = np.array([0.85, -0.08, 0.38])  # Left position
+        
+        self.mp3 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=True)
+        self.mp3.GRASP_SUCCESS_THRESHOLD = 0.75
+        self.mp3.PICK_LOWER_DIST = 0.09
+        self.mp3.PICK_LIFT_DIST = 0.18
+        self.mp3.target_location = np.array([0.75, 0, 0.38])  # Right position
+        
+        self.phase = 0  # 0: first pick-place, 1: second pick-place, 2: third pick-place, 3: done
+        self.episode_ended = False
+        
+        print("Custom grasp three policy initialized with experimental parameters")
+        print("Will execute three sequential pick-place actions in cupboard environment")
+        print("Target locations: center, left, right")
+    
+    def reset(self):
+        self.mp1.reset()
+        self.mp2.reset()
+        self.mp3.reset()
+        self.phase = 0
+        self.episode_ended = False
+    
+    def step(self, obs):
+        if self.episode_ended:
+            return None
+        
+        # Phase 0: First pick-place action (center)
+        if self.phase == 0:
+            action = self.mp1.step(obs)
+            if getattr(self.mp1, 'episode_ended', False):
+                print("First pick-place action completed, moving to second")
+                self.phase = 1
+                self.mp2.reset()
+            return action
+        
+        # Phase 1: Second pick-place action (left)
+        elif self.phase == 1:
+            action = self.mp2.step(obs)
+            if getattr(self.mp2, 'episode_ended', False):
+                print("Second pick-place action completed, moving to third")
+                self.phase = 2
+                self.mp3.reset()
+            return action
+        
+        # Phase 2: Third pick-place action (right)
+        elif self.phase == 2:
+            action = self.mp3.step(obs)
+            if getattr(self.mp3, 'episode_ended', False):
+                print("Third pick-place action completed, all tasks done")
+                self.phase = 3
+                self.episode_ended = True
+            return action
+        
+        # Phase 3: done
+        else:
+            return None
 
 if __name__ == '__main__':
     # WebServer(Queue()).run(); time.sleep(1000)
