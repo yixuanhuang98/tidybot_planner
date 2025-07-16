@@ -873,11 +873,34 @@ class MotionPlannerPolicy(BaseAgent):
             dy = target_ee_pos[1] - curr_position[1]
             target_heading = self.restrict_heading_range(math.atan2(dy, dx))
             target_position = (curr_position[0] + signed_dist * math.cos(target_heading), curr_position[1] + signed_dist * math.sin(target_heading))
-            # new_waypoint = (target_position[0] - 0.5, target_position[1])
-            # waypoints = [curr_position, new_waypoint, target_position]
             waypoints = [curr_position, target_position]
+        
+        # Add waypoints to ensure approach along +x direction
+        if len(waypoints) >= 2:
+            final_waypoint = waypoints[-1]
+            prev_waypoint = waypoints[-2]
+            
+            # Check if the final approach is along +x direction
+            approach_dx = final_waypoint[0] - prev_waypoint[0]
+            approach_dy = final_waypoint[1] - prev_waypoint[1]
+            
+            # If not approaching along +x direction, add intermediate waypoints
+            if abs(approach_dx) < abs(approach_dy) or approach_dx < 0:
+                print(f"Adding waypoints for +x approach. Current approach: dx={approach_dx:.3f}, dy={approach_dy:.3f}")
+                
+                # Create intermediate waypoints for +x approach
+                # First, move to the same Y coordinate as target, but further back in X
+                intermediate_x = final_waypoint[0] - end_effector_offset - 0.2  # 20cm further back
+                intermediate_y = final_waypoint[1]
+                intermediate_waypoint = (intermediate_x, intermediate_y)
+                
+                # Then move straight along +x to the final position
+                new_waypoints = waypoints[:-1] + [intermediate_waypoint, final_waypoint]
+                waypoints = new_waypoints
+                print(f"Added intermediate waypoint: {intermediate_waypoint}")
+                print(f"New waypoints: {waypoints}")
             
         return {'waypoints': waypoints, 
-                'target_ee_pos': target_ee_pos} 
+                'target_ee_pos': target_ee_pos}
 
     
