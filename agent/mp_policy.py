@@ -875,10 +875,15 @@ class MotionPlannerPolicy(BaseAgent):
             dy = target_ee_pos[1] - curr_position[1]
             target_heading = self.restrict_heading_range(math.atan2(dy, dx))
             if self.custom_grasp and self.cupboard_mode:
-                target_position = (target_ee_pos[0] - end_effector_offset, target_ee_pos[1])
-                middle_position = (target_ee_pos[0] - 1.0, target_ee_pos[1])
-                middle_position_1 = (curr_position[0] - 0.5, curr_position[1])
-                waypoints = [curr_position, middle_position_1,middle_position,target_position]
+                if command['primitive_name'] == 'pick':
+                    target_position = (target_ee_pos[0] - end_effector_offset, target_ee_pos[1])
+                    middle_position = (target_ee_pos[0] - 1.0, target_ee_pos[1])
+                    waypoints = [curr_position ,middle_position,target_position]
+                elif command['primitive_name'] == 'place':
+                    target_position = (target_ee_pos[0] - end_effector_offset, target_ee_pos[1])
+                    middle_position = (target_ee_pos[0] - 1.0, target_ee_pos[1])
+                    middle_position_1 = (curr_position[0] - 0.5, curr_position[1])
+                    waypoints = [curr_position, middle_position_1,middle_position,target_position]
             else:
                 target_position = (curr_position[0] + signed_dist * math.cos(target_heading), curr_position[1] + signed_dist * math.sin(target_heading))
                 waypoints = [curr_position, target_position]

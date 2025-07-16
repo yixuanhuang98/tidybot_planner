@@ -1220,19 +1220,19 @@ class MotionPlannerPolicyCustomGraspThreeWrapper(Policy):
         self.mp1.GRASP_SUCCESS_THRESHOLD = 0.75
         self.mp1.PICK_LOWER_DIST = 0.09
         self.mp1.PICK_LIFT_DIST = 0.18
-        self.mp1.target_location = np.array([0.85, 0.08, 0.38])  # Center position
+        self.mp1.target_location = np.array([0.8, 0.08, 0.38])  # Center position
         
         self.mp2 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=True)
         self.mp2.GRASP_SUCCESS_THRESHOLD = 0.75
         self.mp2.PICK_LOWER_DIST = 0.09
         self.mp2.PICK_LIFT_DIST = 0.18
-        self.mp2.target_location = np.array([0.85, -0.08, 0.38])  # Left position
+        self.mp2.target_location = np.array([0.8, -0.08, 0.38])  # Left position
         
         self.mp3 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=True)
         self.mp3.GRASP_SUCCESS_THRESHOLD = 0.75
         self.mp3.PICK_LOWER_DIST = 0.09
         self.mp3.PICK_LIFT_DIST = 0.18
-        self.mp3.target_location = np.array([0.75, 0, 0.38])  # Right position
+        self.mp3.target_location = np.array([0.73, 0, 0.38])  # Right position
         
         self.phase = 0  # 0: first pick-place, 1: second pick-place, 2: third pick-place, 3: done
         self.episode_ended = False
