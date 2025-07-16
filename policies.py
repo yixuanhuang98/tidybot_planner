@@ -1126,8 +1126,8 @@ class MotionPlannerPolicyStackCupboardThreeWrapper(Policy):
 
 # Motion planner policy from mp_policy.py (agent)
 class MotionPlannerPolicyMPWrapper(Policy):
-    def __init__(self):
-        self.impl = MotionPlannerPolicyMP()
+    def __init__(self, custom_grasp=False):
+        self.impl = MotionPlannerPolicyMP(custom_grasp=custom_grasp)
         self.impl.PLACEMENT_X_OFFSET = 0.1
         self.impl.PLACEMENT_Y_OFFSET = 0.1
         self.impl.PLACEMENT_Z_OFFSET = 0.2
@@ -1138,8 +1138,8 @@ class MotionPlannerPolicyMPWrapper(Policy):
 
 # Motion planner policy for cupboard environment
 class MotionPlannerPolicyMPCupboardWrapper(Policy):
-    def __init__(self):
-        self.impl = MotionPlannerPolicyMP(cupboard_mode=True)
+    def __init__(self, custom_grasp=False):
+        self.impl = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=custom_grasp)
         self.impl.PLACEMENT_X_OFFSET = 0.1
         self.impl.PLACEMENT_Y_OFFSET = 0.1
         self.impl.PLACEMENT_Z_OFFSET = 0.5
@@ -1151,12 +1151,12 @@ class MotionPlannerPolicyMPCupboardWrapper(Policy):
 
 # Motion planner policy for three sequential placements
 class MotionPlannerPolicyMPThreeWrapper(Policy):
-    def __init__(self):
-        self.mp1 = MotionPlannerPolicyMP(cupboard_mode=True)
+    def __init__(self, custom_grasp=False):
+        self.mp1 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=custom_grasp)
         self.mp1.target_location = np.array([0.8, 0, 0.5])
-        self.mp2 = MotionPlannerPolicyMP(cupboard_mode=True)
+        self.mp2 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=custom_grasp)
         self.mp2.target_location = np.array([0.8, -0.1, 0.5])
-        self.mp3 = MotionPlannerPolicyMP(cupboard_mode=True)
+        self.mp3 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=custom_grasp)
         self.mp3.target_location = np.array([0.8, 0.1, 0.5])
         self.phase = 0
         self.episode_ended = False
@@ -1189,6 +1189,25 @@ class MotionPlannerPolicyMPThreeWrapper(Policy):
             return action
         else:
             return None
+
+# Custom grasp policy wrapper for experimentation
+class MotionPlannerPolicyCustomGraspWrapper(Policy):
+    def __init__(self):
+        self.impl = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=True)
+        # This wrapper is designed to work with cupboard_scene_objects_inside.xml
+        # where objects are already placed inside the cupboard
+        # Custom grasping parameters are now set automatically in the MP policy
+        # Placement parameters
+        self.impl.PLACEMENT_X_OFFSET = 0.1
+        self.impl.PLACEMENT_Y_OFFSET = 0.1
+        self.impl.PLACEMENT_Z_OFFSET = 0.5
+        self.impl.target_location = np.array([0.8, 0, 0.5])
+        print("Custom grasp policy initialized with experimental parameters")
+        print("Designed for cupboard_scene_objects_inside.xml (objects already in cupboard)")
+    def reset(self):
+        self.impl.reset()
+    def step(self, obs):
+        return self.impl.step(obs)
 
 if __name__ == '__main__':
     # WebServer(Queue()).run(); time.sleep(1000)
