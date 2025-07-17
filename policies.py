@@ -20,6 +20,7 @@ from agent.stack_policies import MotionPlannerPolicyStackTable  # <-- Add this i
 from agent.stack_policies import MotionPlannerPolicyStackDrawer  # <-- Add this import for drawer stacking
 from agent.stack_policies import MotionPlannerPolicyStackCupboard  # <-- Add this import for cupboard stacking
 from agent.mp_policy import MotionPlannerPolicy as MotionPlannerPolicyMP  # Import new MP policy
+from agent.open_policy import MotionPlannerPolicyCabinetMP as MotionPlannerPolicyCabinetMP  # Import new MP policy
 
 class Policy:
     def reset(self):
@@ -1153,7 +1154,7 @@ class MotionPlannerPolicyMPCupboardWrapper(Policy):
 class MotionPlannerPolicyMPCabinetWrapper(Policy):
     def __init__(self, custom_grasp=False):
         # Use cupboard_mode=True since cabinet environment is similar to cupboard
-        self.impl = MotionPlannerPolicyMP(custom_grasp=custom_grasp)
+        self.impl = MotionPlannerPolicyCabinetMP(custom_grasp=custom_grasp)
         self.impl.PLACEMENT_X_OFFSET = 0.6  # Distance to cabinet
         self.impl.PLACEMENT_Y_OFFSET = 0.0  # Center alignment
         self.impl.PLACEMENT_Z_OFFSET = 0.25  # Cabinet shelf height
@@ -1166,12 +1167,12 @@ class MotionPlannerPolicyMPCabinetWrapper(Policy):
 # Motion planner policy for three sequential placements
 class MotionPlannerPolicyMPThreeWrapper(Policy):
     def __init__(self, custom_grasp=False):
-        self.mp1 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=custom_grasp)
-        self.mp1.target_location = np.array([0.8, 0, 0.5])
-        self.mp2 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=custom_grasp)
-        self.mp2.target_location = np.array([0.8, -0.1, 0.5])
-        self.mp3 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=custom_grasp)
-        self.mp3.target_location = np.array([0.8, 0.1, 0.5])
+        self.mp1 = MotionPlannerPolicyMP(custom_grasp=custom_grasp)
+        self.mp1.target_location = np.array([0.8, 0, 0.2])
+        self.mp2 = MotionPlannerPolicyMP(custom_grasp=custom_grasp)
+        self.mp2.target_location = np.array([0.8, -0.1, 0.2])
+        self.mp3 = MotionPlannerPolicyMP(custom_grasp=custom_grasp)
+        self.mp3.target_location = np.array([0.8, 0.1, 0.2])
         self.phase = 0
         self.episode_ended = False
     def reset(self):

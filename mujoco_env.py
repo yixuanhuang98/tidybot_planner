@@ -23,7 +23,7 @@ from ik_solver import IKSolver
 
 class ShmState:
     def __init__(self, existing_instance=None):
-        arr = np.empty(3 + 3 + 4 + 1 + 1 + 9 + 12)  # Added 9 for 3 cube positions and 12 for 3 cube quaternions (3*3 + 3*4)
+        arr = np.empty(3 + 3 + 4 + 1 + 1 + 9 + 12 + 6)  # Added 6 for 2 handle positions (2*3)
         if existing_instance is None:
             self.shm = shared_memory.SharedMemory(create=True, size=arr.nbytes)
         else:
@@ -40,6 +40,8 @@ class ShmState:
         self.cube1_quat = self.data[21:25]
         self.cube2_quat = self.data[25:29]
         self.cube3_quat = self.data[29:33]
+        self.left_handle_pos = self.data[33:36]
+        self.right_handle_pos = self.data[36:39]
         self.initialized[:] = 0.0
 
     def close(self):
@@ -116,6 +118,8 @@ class BaseController:
         self.otg_out = OutputParameter(num_dofs)
         self.otg_inp.max_velocity = [0.5, 0.5, 3.14]
         self.otg_inp.max_acceleration = [0.5, 0.5, 2.36]
+        # self.otg_inp.max_velocity = [0.2, 0.2, 0.5]  # [x, y, theta] velocities
+        # self.otg_inp.max_acceleration = [0.2, 0.2, 0.5]  # [x, y, theta] accelerations
         self.otg_res = None
 
     def reset(self):
@@ -329,6 +333,15 @@ class MujocoSim:
         self.shm_state.cube2_quat[:] = self.qpos_cube2[3:7]
         self.shm_state.cube3_pos[:] = self.qpos_cube3[:3]
         self.shm_state.cube3_quat[:] = self.qpos_cube3[3:7]
+        # Update handle positions if cabinet_scene
+        if self.cabinet_scene:
+            try:
+                left_id = self.model.site('leftdoor_site').id
+                right_id = self.model.site('rightdoor_site').id
+                self.shm_state.left_handle_pos[:] = self.data.site(left_id).xpos
+                self.shm_state.right_handle_pos[:] = self.data.site(right_id).xpos
+            except Exception as e:
+                print(f"Warning: Could not update handle positions: {e}")
 
         # Notify reset() function that state has been initialized
         self.shm_state.initialized[:] = 1.0
@@ -471,6 +484,9 @@ class MujocoEnv:
             'cube3_pos': self.shm_state.cube3_pos.copy(),
             'cube3_quat': cube3_quat,
         }
+        if self.cabinet_scene:
+            obs['left_handle_pos'] = self.shm_state.left_handle_pos.copy()
+            obs['right_handle_pos'] = self.shm_state.right_handle_pos.copy()
         if self.render_images:
             for shm_image in self.shm_images:
                 obs[f'{shm_image.camera_name}_image'] = shm_image.data.copy()
