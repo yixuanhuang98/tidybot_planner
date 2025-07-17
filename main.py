@@ -96,6 +96,8 @@ def main(args):
                 env = MujocoEnv(cupboard_scene=True, custom_grasp=True)
             else:
                 env = MujocoEnv(cupboard_scene=True)
+        elif args.cabinet_scene:
+            env = MujocoEnv(cabinet_scene=True)
         elif args.teleop:
             env = MujocoEnv(show_images=True)
         else:
@@ -130,6 +132,9 @@ def main(args):
         if args.cupboard_scene:
             from policies import MotionPlannerPolicyMPCupboardWrapper
             policy = MotionPlannerPolicyMPCupboardWrapper(custom_grasp=args.custom_grasp)
+        elif args.cabinet_scene:
+            from policies import MotionPlannerPolicyMPCabinetWrapper
+            policy = MotionPlannerPolicyMPCabinetWrapper(custom_grasp=args.custom_grasp)
         else:
             from policies import MotionPlannerPolicyMPWrapper
             policy = MotionPlannerPolicyMPWrapper(custom_grasp=args.custom_grasp)
@@ -171,6 +176,7 @@ if __name__ == '__main__':
     parser.add_argument('--table_scene', action='store_true', help='Use table scene with three cubes')
     parser.add_argument('--drawer_scene', action='store_true', help='Use drawer scene with three cubes')
     parser.add_argument('--cupboard_scene', action='store_true', help='Use cupboard scene with three cubes')
+    parser.add_argument('--cabinet_scene', action='store_true', help='Use cabinet scene with three cubes')
     parser.add_argument('--save', action='store_true')
     parser.add_argument('--output-dir', default='data/demos')
     main(parser.parse_args())

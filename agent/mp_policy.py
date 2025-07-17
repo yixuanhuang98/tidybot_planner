@@ -430,7 +430,7 @@ class MotionPlannerPolicy(BaseAgent):
                         lifted_pos = object_relative_pos.copy()
                         lifted_pos[2] += (self.PICK_LIFT_DIST - self.PICK_LOWER_DIST) # Net lift
                         target_arm_pos = lifted_pos
-                        target_arm_quat = rotated_arm_quat # np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
+                        target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
                         target_gripper_pos = np.array([1.0])  # Gripper closed
 
                         print(f"Step 4: Lifting object... target height: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")

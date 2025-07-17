@@ -1149,6 +1149,20 @@ class MotionPlannerPolicyMPCupboardWrapper(Policy):
     def step(self, obs):
         return self.impl.step(obs)
 
+# Motion planner policy for cabinet environment
+class MotionPlannerPolicyMPCabinetWrapper(Policy):
+    def __init__(self, custom_grasp=False):
+        # Use cupboard_mode=True since cabinet environment is similar to cupboard
+        self.impl = MotionPlannerPolicyMP(custom_grasp=custom_grasp)
+        self.impl.PLACEMENT_X_OFFSET = 0.6  # Distance to cabinet
+        self.impl.PLACEMENT_Y_OFFSET = 0.0  # Center alignment
+        self.impl.PLACEMENT_Z_OFFSET = 0.25  # Cabinet shelf height
+        self.impl.target_location = np.array([-0.5, 0, 0.25])  # Cabinet position
+    def reset(self):
+        self.impl.reset()
+    def step(self, obs):
+        return self.impl.step(obs)
+
 # Motion planner policy for three sequential placements
 class MotionPlannerPolicyMPThreeWrapper(Policy):
     def __init__(self, custom_grasp=False):
