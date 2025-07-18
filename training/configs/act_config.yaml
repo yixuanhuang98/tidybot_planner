@@ -1,0 +1,74 @@
+# ACT Policy Configuration for TidyBot Table Stacking
+# This configuration file defines the parameters for training an Action Chunking Transformer (ACT)
+# policy on the TidyBot table stacking task.
+
+# Dataset Configuration
+dataset:
+  repo_id: "your_username/tidybot_table_stack"
+  root: null  # Use default location
+  
+# Policy Configuration
+policy:
+  type: "act"
+  
+  # Observation and Action History
+  observation_delta_indices: [-1, 0]  # Use previous and current observation
+  action_delta_indices: [0, 1, 2, 3, 4, 5, 6, 7]  # Predict 8 future actions
+  
+  # ACT Parameters
+  chunk_size: 8
+  n_layers: 8
+  n_heads: 8
+  dim_feedforward: 3200
+  hidden_dim: 512
+  dropout: 0.1
+  
+  # Vision Encoder Parameters
+  vision_backbone: "resnet18"
+  crop_shape: [84, 84]
+  crop_is_random: true
+  use_group_norm: true
+  
+  # Additional Parameters
+  use_layer_norm: true
+  activation: "relu"
+
+# Training Configuration
+training:
+  output_dir: "outputs/train/tidybot_act"
+  training_steps: 50000
+  batch_size: 16
+  learning_rate: 1e-4
+  weight_decay: 1e-4
+  
+  # Scheduling
+  lr_scheduler: "cosine"
+  warmup_steps: 1000
+  
+  # Gradient Clipping
+  grad_clip_norm: 1.0
+  
+  # Device Configuration
+  device: "cuda"
+  num_workers: 4
+  
+  # Logging and Saving
+  log_freq: 100
+  save_freq: 10000
+  eval_freq: 5000
+  
+  # Weights & Biases
+  wandb_project: "tidybot_training"
+  wandb_entity: null  # Set to your W&B username
+  
+  # Reproducibility
+  seed: 42
+
+# Evaluation Configuration
+evaluation:
+  num_episodes: 100
+  max_steps: 1000
+  render: false
+  show_viewer: false
+  save_videos: false
+  video_dir: "evaluation_videos"

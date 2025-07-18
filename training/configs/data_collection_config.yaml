@@ -1,0 +1,63 @@
+# Data Collection Configuration for TidyBot Table Stacking
+# This configuration file defines the parameters for collecting demonstration data
+# using the motion planner policy.
+
+# Dataset Configuration
+dataset:
+  repo_id: "your_username/tidybot_table_stack"
+  root: null  # Use default location
+  num_episodes: 100
+  fps: 10
+  push_to_hub: true
+  task_description: "Pick the cube with smallest x-coordinate and stack it on the cube with largest x-coordinate"
+
+# Environment Configuration
+environment:
+  max_episode_steps: 1000
+  show_viewer: false
+  render_images: true
+  render_every_n_frames: 1
+
+# Data Collection Configuration
+collection:
+  # Image/Video Processing
+  video_backend: "pyav"
+  image_writer_threads: 4
+  image_writer_processes: 0
+  
+  # Performance Settings
+  maintain_fps: true
+  timeout_per_episode: 300  # 5 minutes max per episode
+  
+  # Retry Settings
+  max_retries_per_episode: 3
+  clear_buffer_on_failure: true
+
+# Policy Configuration
+policy:
+  type: "motion_planner"
+  # Motion planner doesn't need additional configuration
+  # It uses the existing MotionPlannerTableStackPolicy
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  log_episode_stats: true
+  log_collection_progress: true
+  
+# Output Configuration
+output:
+  save_stats: true
+  stats_file: "collection_stats.json"
+  
+# Quality Control
+quality_control:
+  min_episode_length: 10  # Minimum steps for valid episode
+  max_episode_length: 1000  # Maximum steps before truncation
+  require_motion: true  # Require some robot movement
+  
+# Debugging
+debug:
+  verbose: false
+  save_debug_images: false
+  debug_image_dir: "debug_images"
