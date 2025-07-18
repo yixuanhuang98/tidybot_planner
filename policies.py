@@ -1158,7 +1158,7 @@ class MotionPlannerPolicyMPCabinetWrapper(Policy):
         self.impl.PLACEMENT_X_OFFSET = 0.6  # Distance to cabinet
         self.impl.PLACEMENT_Y_OFFSET = 0.0  # Center alignment
         self.impl.PLACEMENT_Z_OFFSET = 0.25  # Cabinet shelf height
-        self.impl.target_location = np.array([-0.5, 0, 0.25])  # Cabinet position
+        self.impl.target_location = np.array([0, -0.1, 0.25])  # Cabinet position
     def reset(self):
         self.impl.reset()
     def step(self, obs):

@@ -481,10 +481,6 @@ class MotionPlannerPolicyCabinetMP(BaseAgent):
 
                 
 
-                print(f"Placing: target_relative_pos = {target_relative_pos}")
-                print(f"Target EE pos: {self.target_ee_pos}, Base pose: {base_pose}")
-                print(f"Grasp state: {self.grasp_state}")
-
                 if self.grasp_state == PlaceState.APPROACH:
                     # Step 3: Open gripper to place object
                     target_arm_pos = arm_pos.copy()
@@ -731,15 +727,19 @@ class MotionPlannerPolicyCabinetMP(BaseAgent):
                 middle_position = (target_ee_pos[0] - 1.0, target_ee_pos[1])
                 waypoints = [curr_position, middle_position, target_position]
             elif command['primitive_name'] == 'place':
+                target_position = (target_ee_pos[0] - 0.8, target_ee_pos[1])
+                waypoints = [curr_position, target_position]
+                
                 # Check if this is a cabinet opening motion (handle is grasped)
                 
                 # This is likely a cabinet opening motion - pull the handle to open the door
                 # Move backward (negative X) to pull the handle and open the cabinet
-                pull_distance = 0.1  # Distance to pull the handle
-                target_position = (curr_position[0] - pull_distance, curr_position[1])
-                # Add intermediate waypoint for smooth motion
-                intermediate_position = (curr_position[0] - pull_distance * 0.5, curr_position[1])
-                waypoints = [curr_position, intermediate_position, target_position]
+                
+                # pull_distance = 0.1  # Distance to pull the handle
+                # target_position = (curr_position[0] - pull_distance, curr_position[1])
+                # # Add intermediate waypoint for smooth motion
+                # intermediate_position = (curr_position[0] - pull_distance * 0.5, curr_position[1])
+                # waypoints = [curr_position, intermediate_position, target_position]
                 
         return {'waypoints': waypoints, 
                 'target_ee_pos': target_ee_pos}
