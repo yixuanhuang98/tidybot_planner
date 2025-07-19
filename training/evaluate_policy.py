@@ -27,6 +27,37 @@ from lerobot.utils.utils import init_logging
 from training.tidybot_env import TidybotEnv
 
 
+def save_video_from_frames(frames: List[np.ndarray], video_path: str, fps: int = 30):
+    """
+    Save a list of frames as a video file.
+    
+    Args:
+        frames: List of RGB frames (numpy arrays)
+        video_path: Path to save the video file
+        fps: Frames per second for the video
+    """
+    import cv2
+    
+    if len(frames) == 0:
+        return
+    
+    # Get frame dimensions
+    height, width, _ = frames[0].shape
+    
+    # Create video writer
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
+    
+    # Write frames
+    for frame in frames:
+        # Convert RGB to BGR for OpenCV
+        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        video_writer.write(frame_bgr)
+    
+    # Release video writer
+    video_writer.release()
+
+
 def setup_logging(log_level: str = "INFO"):
     """Setup logging configuration."""
     logging.basicConfig(
@@ -191,7 +222,9 @@ def evaluate_episode(
     policy: Any,
     max_steps: int = 1000,
     render: bool = False,
-    device: str = "cuda"
+    device: str = "cuda",
+    save_video: bool = False,
+    video_path: str = None
 ) -> Dict[str, Any]:
     """
     Evaluate a single episode.
@@ -202,6 +235,8 @@ def evaluate_episode(
         max_steps: Maximum steps per episode
         render: Whether to render the environment
         device: Device for computation
+        save_video: Whether to save video of the episode
+        video_path: Path to save the video file
         
     Returns:
         Episode results dictionary
@@ -214,6 +249,7 @@ def evaluate_episode(
     episode_length = 0
     success = False
     episode_start_time = time.time()
+    frames = []
     
     # Convert initial observation to tensor
     obs_tensor = {}
@@ -222,6 +258,12 @@ def evaluate_episode(
             obs_tensor[key] = torch.from_numpy(value).unsqueeze(0).to(device)
         else:
             obs_tensor[key] = torch.tensor(value).unsqueeze(0).to(device)
+    
+    # Capture initial frame if saving video
+    if save_video:
+        frame = env.render(mode='rgb_array')
+        if frame is not None:
+            frames.append(frame)
     
     # Episode loop
     for step in range(max_steps):
@@ -251,6 +293,12 @@ def evaluate_episode(
             else:
                 obs_tensor[key] = torch.tensor(value).unsqueeze(0).to(device)
         
+        # Capture frame if saving video
+        if save_video:
+            frame = env.render(mode='rgb_array')
+            if frame is not None:
+                frames.append(frame)
+        
         # Render if requested
         if render:
             env.render()
@@ -258,6 +306,10 @@ def evaluate_episode(
         # Check termination
         if terminated or truncated:
             break
+    
+    # Save video if requested
+    if save_video and video_path and len(frames) > 0:
+        save_video_from_frames(frames, video_path)
     
     episode_duration = time.time() - episode_start_time
     
@@ -349,13 +401,20 @@ def evaluate_policy(
     for episode in range(num_episodes):
         logger.info(f"📹 Episode {episode + 1}/{num_episodes}")
         
+        # Generate video path if saving videos
+        episode_video_path = None
+        if save_videos:
+            episode_video_path = video_path / f"episode_{episode+1:03d}.mp4"
+        
         # Evaluate episode
         episode_result = evaluate_episode(
             env=env,
             policy=policy,
             max_steps=max_steps,
             render=render,
-            device=device
+            device=device,
+            save_video=save_videos,
+            video_path=str(episode_video_path) if episode_video_path else None
         )
         
         # Log episode results
@@ -368,6 +427,8 @@ def evaluate_policy(
         logger.info(f"   📊 Reward: {reward:.2f}")
         logger.info(f"   📏 Length: {length} steps")
         logger.info(f"   ⏱️  Duration: {duration:.2f}s")
+        if save_videos and episode_video_path:
+            logger.info(f"   🎬 Video saved: {episode_video_path}")
         
         # Update statistics
         results.append(episode_result)
@@ -412,6 +473,11 @@ def evaluate_policy(
     logger.info(f"   Average Reward: {avg_reward:.2f} ± {np.std(rewards):.2f}")
     logger.info(f"   Average Steps: {avg_steps:.1f} ± {np.std(lengths):.1f}")
     logger.info(f"   Average Duration: {avg_duration:.2f}s ± {np.std(durations):.2f}s")
+    
+    # Log video information
+    if save_videos:
+        logger.info(f"🎬 Videos saved to: {video_path}")
+        logger.info(f"📹 Total videos: {num_episodes}")
     
     # Cleanup
     env.close()

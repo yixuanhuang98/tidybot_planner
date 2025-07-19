@@ -53,7 +53,7 @@ def main():
         --repo-id {repo_id} \\
         --num-episodes {num_episodes} \\
         --fps 10 \\
-        --max-episode-steps 5000"""
+        --max-episode-steps 50000"""
     
     if not run_command(collect_cmd, "Data Collection"):
         return
@@ -77,7 +77,9 @@ def main():
         --policy-path outputs/train/tidybot_demo/final \\
         --dataset-repo-id {repo_id} \\
         --num-episodes 1 \\
-        --max-steps 50 \\
+        --max-steps 500 \\
+        --save-videos \\
+        --video-dir evaluation_videos \\
         --output-file evaluation_results.json"""
     
     if not run_command(eval_cmd, "Policy Evaluation"):
