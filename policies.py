@@ -1293,6 +1293,96 @@ class MotionPlannerPolicyCustomGraspThreeWrapper(Policy):
         else:
             return None
 
+# Motion planner policy for N sequential pick-place actions in cupboard environment
+class MotionPlannerPolicyMPNCupboardWrapper(Policy):
+    def __init__(self, target_locations=None, custom_grasp=False, grasp_params=None):
+        """
+        Initialize MotionPlannerPolicyMPNCupboardWrapper for N objects
+        
+        Args:
+            target_locations (list): List of target locations as numpy arrays [x, y, z]
+                                   If None, uses default 3 locations
+            custom_grasp (bool): Enable custom grasping parameters
+            grasp_params (dict): Optional custom grasping parameters
+        """
+        # Default target locations if none provided
+        if target_locations is None:
+            target_locations = [
+                np.array([0.8, 0.08, 0.38]),   # Center position
+                np.array([0.8, -0.08, 0.38]),  # Left position  
+                np.array([0.73, 0, 0.38])      # Right position
+            ]
+        
+        self.target_locations = target_locations
+        self.num_objects = len(target_locations)
+        
+        # Default grasping parameters
+        default_grasp_params = {
+            'GRASP_SUCCESS_THRESHOLD': 0.75,
+            'PICK_LOWER_DIST': 0.09,
+            'PICK_LIFT_DIST': 0.18
+        }
+        
+        # Override with custom parameters if provided
+        if grasp_params:
+            default_grasp_params.update(grasp_params)
+        
+        # Create motion planner instances for each object
+        self.motion_planners = []
+        for i, target_loc in enumerate(target_locations):
+            mp = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=custom_grasp)
+            mp.GRASP_SUCCESS_THRESHOLD = default_grasp_params['GRASP_SUCCESS_THRESHOLD']
+            mp.PICK_LOWER_DIST = default_grasp_params['PICK_LOWER_DIST']
+            mp.PICK_LIFT_DIST = default_grasp_params['PICK_LIFT_DIST']
+            mp.target_location = target_loc
+            self.motion_planners.append(mp)
+        
+        self.current_phase = 0  # Current object being processed
+        self.episode_ended = False
+        
+        print(f"MotionPlannerPolicyMPNCupboardWrapper initialized for {self.num_objects} objects")
+        print(f"Target locations: {[f'[{loc[0]:.2f}, {loc[1]:.2f}, {loc[2]:.2f}]' for loc in target_locations]}")
+        print(f"Custom grasp: {custom_grasp}")
+        if grasp_params:
+            print(f"Custom grasp parameters: {grasp_params}")
+    
+    def reset(self):
+        """Reset all motion planners and episode state"""
+        for mp in self.motion_planners:
+            mp.reset()
+        self.current_phase = 0
+        self.episode_ended = False
+        print(f"Reset MotionPlannerPolicyMPNCupboardWrapper - ready to process {self.num_objects} objects")
+    
+    def step(self, obs):
+        """Execute the current phase of the sequential pick-place task"""
+        if self.episode_ended:
+            return None
+        
+        # Check if we've completed all phases
+        if self.current_phase >= self.num_objects:
+            self.episode_ended = True
+            print(f"All {self.num_objects} pick-place actions completed!")
+            return None
+        
+        # Execute current motion planner
+        current_mp = self.motion_planners[self.current_phase]
+        action = current_mp.step(obs)
+        
+        # Check if current phase is complete
+        if getattr(current_mp, 'episode_ended', False):
+            print(f"Phase {self.current_phase + 1}/{self.num_objects} completed")
+            self.current_phase += 1
+            
+            # Reset next motion planner if there are more phases
+            if self.current_phase < self.num_objects:
+                print(f"Moving to phase {self.current_phase + 1}/{self.num_objects}")
+                self.motion_planners[self.current_phase].reset()
+            else:
+                print("All phases completed!")
+        
+        return action
+
 if __name__ == '__main__':
     # WebServer(Queue()).run(); time.sleep(1000)
     # WebXRListener(); time.sleep(1000)

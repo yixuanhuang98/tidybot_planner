@@ -9,6 +9,7 @@ from episode_storage import EpisodeWriter
 from policies import TeleopPolicy, RemotePolicy, MotionPlannerPolicy
 from policies import MotionPlannerPolicyStackWrapper
 from policies import MotionPlannerPolicyStackThreeWrapper
+import numpy as np
 
 def should_save_episode(writer):
     if len(writer) == 0:
@@ -147,6 +148,27 @@ def main(args):
     elif args.custom_grasp_three:
         from policies import MotionPlannerPolicyCustomGraspThreeWrapper
         policy = MotionPlannerPolicyCustomGraspThreeWrapper()
+    elif args.mp_policy_n_cupboard:
+        from policies import MotionPlannerPolicyMPNCupboardWrapper
+        # Example target locations - can be customized
+        target_locations = [
+            np.array([0.8, 0.08, 0.38]),   # Center position
+            np.array([0.8, -0.08, 0.38]),  # Left position  
+            np.array([0.73, 0, 0.38]),     # Right position
+            np.array([0.8, 0.16, 0.38]),   # Far right position
+            np.array([0.8, -0.16, 0.38])   # Far left position
+        ]
+        # Custom grasp parameters (optional)
+        grasp_params = {
+            'GRASP_SUCCESS_THRESHOLD': 0.75,
+            'PICK_LOWER_DIST': 0.09,
+            'PICK_LIFT_DIST': 0.18
+        }
+        policy = MotionPlannerPolicyMPNCupboardWrapper(
+            target_locations=target_locations,
+            custom_grasp=args.custom_grasp,
+            grasp_params=grasp_params if args.custom_grasp else None
+        )
     elif args.teleop:
         from policies import TeleopPolicy
         policy = TeleopPolicy()
@@ -169,6 +191,7 @@ if __name__ == '__main__':
     parser.add_argument('--mp_policy', action='store_true', help='Enable new motion planner policy from agent/mp_policy.py')
     parser.add_argument('--mp_policy_cupboard', action='store_true', help='Enable new motion planner policy (cupboard mode) from agent/mp_policy.py')
     parser.add_argument('--mp_policy_three', action='store_true', help='Enable new motion planner policy (three sequential placements) from agent/mp_policy.py')
+    parser.add_argument('--mp_policy_n_cupboard', action='store_true', help='Enable new motion planner policy (N sequential pick-place actions in cupboard) from agent/mp_policy.py')
     parser.add_argument('--custom_grasp', action='store_true', help='Enable custom grasping mode for experimentation')
     parser.add_argument('--custom_grasp_three', action='store_true', help='Enable custom grasping mode for three sequential pick-place actions in cupboard environment')
     parser.add_argument('--stack_policy', action='store_true', help='Enable stacking policy (stack cubes)')
