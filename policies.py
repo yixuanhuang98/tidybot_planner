@@ -1298,6 +1298,70 @@ class MotionPlannerPolicyCustomGraspThreeWrapper(Policy):
         else:
             return None
 
+# Motion planner policy for three sequential pick-place actions in cupboard environment
+class MotionPlannerPolicyMPCupboardThreeWrapper(Policy):
+    def __init__(self, custom_grasp=False):
+        # Create three separate motion planner instances for sequential actions
+        self.mp1 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=custom_grasp)
+        self.mp1.target_location = np.array([0.8, 0, 0.5])  # Center position
+        
+        self.mp2 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=custom_grasp)
+        self.mp2.target_location = np.array([0.8, -0.1, 0.5])  # Left position
+        
+        self.mp3 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=custom_grasp)
+        self.mp3.target_location = np.array([[0.8, 0.1, 0.5]])  # Right position
+        
+        self.phase = 0  # 0: first pick-place, 1: second pick-place, 2: third pick-place, 3: done
+        self.episode_ended = False
+        
+        print("Cupboard three policy initialized")
+        print("Will execute three sequential pick-place actions in cupboard environment")
+        print("Target locations: center, left, right")
+        if custom_grasp:
+            print("Using custom grasp parameters")
+    
+    def reset(self):
+        self.mp1.reset()
+        self.mp2.reset()
+        self.mp3.reset()
+        self.phase = 0
+        self.episode_ended = False
+    
+    def step(self, obs):
+        if self.episode_ended:
+            return None
+        
+        # Phase 0: First pick-place action (center)
+        if self.phase == 0:
+            action = self.mp1.step(obs)
+            if getattr(self.mp1, 'episode_ended', False):
+                print("First pick-place action completed, moving to second")
+                self.phase = 1
+                self.mp2.reset()
+            return action
+        
+        # Phase 1: Second pick-place action (left)
+        elif self.phase == 1:
+            action = self.mp2.step(obs)
+            if getattr(self.mp2, 'episode_ended', False):
+                print("Second pick-place action completed, moving to third")
+                self.phase = 2
+                self.mp3.reset()
+            return action
+        
+        # Phase 2: Third pick-place action (right)
+        elif self.phase == 2:
+            action = self.mp3.step(obs)
+            if getattr(self.mp3, 'episode_ended', False):
+                print("Third pick-place action completed, all tasks done")
+                self.phase = 3
+                self.episode_ended = True
+            return action
+        
+        # Phase 3: done
+        else:
+            return None
+
 if __name__ == '__main__':
     # WebServer(Queue()).run(); time.sleep(1000)
     # WebXRListener(); time.sleep(1000)

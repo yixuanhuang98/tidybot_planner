@@ -138,6 +138,9 @@ def main(args):
         else:
             from policies import MotionPlannerPolicyMPWrapper
             policy = MotionPlannerPolicyMPWrapper(custom_grasp=args.custom_grasp)
+    elif args.cupboard_scene and args.mp_policy_three:
+        from policies import MotionPlannerPolicyMPCupboardThreeWrapper
+        policy = MotionPlannerPolicyMPCupboardThreeWrapper(custom_grasp=args.custom_grasp)
     elif args.mp_policy_three:
         from policies import MotionPlannerPolicyMPThreeWrapper
         policy = MotionPlannerPolicyMPThreeWrapper(custom_grasp=args.custom_grasp)
@@ -167,7 +170,7 @@ if __name__ == '__main__':
     parser.add_argument('--teleop', action='store_true')
     parser.add_argument('--motion_planner', action='store_true')
     parser.add_argument('--mp_policy', action='store_true', help='Enable new motion planner policy from agent/mp_policy.py')
-    parser.add_argument('--mp_policy_three', action='store_true', help='Enable new motion planner policy (three sequential placements) from agent/mp_policy.py')
+    parser.add_argument('--mp_policy_three', action='store_true', help='Enable new motion planner policy (three sequential placements) from agent/mp_policy.py. Use with --cupboard_scene for cupboard-specific behavior.')
     parser.add_argument('--custom_grasp', action='store_true', help='Enable custom grasping mode for experimentation')
     parser.add_argument('--custom_grasp_three', action='store_true', help='Enable custom grasping mode for three sequential pick-place actions in cupboard environment')
     parser.add_argument('--stack_policy', action='store_true', help='Enable stacking policy (stack cubes)')
