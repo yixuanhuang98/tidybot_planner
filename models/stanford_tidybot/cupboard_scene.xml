@@ -52,6 +52,7 @@
             <freejoint/>
             <geom type="box" size="0.02 0.02 0.02" rgba=".5 .5 .7 1" mass="0.1"/>
         </body>
+        
 
         <!-- Overview camera -->
         <camera name="overview" pos="1.0 -2.0 1.7" euler="1.0 0.0 0" fovy="42" resolution="640 480"/>

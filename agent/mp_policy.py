@@ -796,16 +796,29 @@ class MotionPlannerPolicy(BaseAgent):
         """Detect objects using ground truth from MuJoCo simulation and find the one with smallest x value"""
         detected_objects = []
         
-        # Get all three cube positions from MuJoCo environment
+        # Get all object positions from MuJoCo environment dynamically
         cubes = []
-        for i in range(1, 4):
+        
+        # First try to find objects with cube naming convention (cube1, cube2, etc.)
+        i = 1
+        while True:
             cube_key = f'cube{i}_pos'
             if cube_key in obs:
                 cube_pos = obs[cube_key].copy()
                 cubes.append((cube_pos, i))
                 print(f"Detected cube {i} at position: {cube_pos}")
+                i += 1
             else:
-                print(f"Warning: {cube_key} not found in observation")
+                break
+        
+        # If no numbered cubes found, look for any object with _pos suffix
+        if not cubes:
+            for key in obs.keys():
+                if key.endswith('_pos') and not key.startswith('arm_') and not key.startswith('base_') and not key.startswith('left_') and not key.startswith('right_'):
+                    obj_name = key[:-4]  # Remove '_pos' suffix
+                    cube_pos = obs[key].copy()
+                    cubes.append((cube_pos, obj_name))
+                    print(f"Detected {obj_name} at position: {cube_pos}")
         
         if cubes:
             # Sort cubes by x position and select the one with smallest x value
@@ -816,7 +829,7 @@ class MotionPlannerPolicy(BaseAgent):
                 cubes.sort(key=lambda x: x[0][0])  # Sort by x coordinate (first element of position)
                 target_cube_pos, target_cube_id = cubes[0]
             detected_objects.append(target_cube_pos)
-            print(f"Selected cube {target_cube_id} with smallest x value: {target_cube_pos[0]:.3f}")
+            print(f"Selected object {target_cube_id} with smallest x value: {target_cube_pos[0]:.3f}")
         
         return detected_objects
 
@@ -831,7 +844,7 @@ class MotionPlannerPolicy(BaseAgent):
     def get_end_effector_offset(self, primitive_name):
         """Calculate end-effector offset based on task and gripper state from controller.py"""
         # Simplified version - assume gripper starts open
-        if self.cupboard_mode and primitive_name == 'pick':
+        if self.cupboard_mode and primitive_name == 'pick' and self.custom_grasp:
             return 0.7
         elif self.cupboard_mode and primitive_name == 'place':
             return 0.85
@@ -865,7 +878,7 @@ class MotionPlannerPolicy(BaseAgent):
                 new_waypoint = (start[0] + t2 * d[0], start[1] + t2 * d[1])
                 break
                 
-        if new_waypoint is not None and not self.custom_grasp:
+        if new_waypoint is not None and not self.cupboard_mode:
             # Discard all waypoints that are too close to target_ee_pos
             waypoints = reversed_waypoints[idx:][::-1] + [new_waypoint]
         else:
@@ -886,6 +899,10 @@ class MotionPlannerPolicy(BaseAgent):
                     middle_position = (target_ee_pos[0] - 1.0, target_ee_pos[1])
                     middle_position_1 = (curr_position[0] - 0.5, curr_position[1])
                     waypoints = [curr_position, middle_position_1,middle_position,target_position]
+            elif self.cupboard_mode and command['primitive_name'] == 'place':
+                target_position = (target_ee_pos[0] - end_effector_offset, target_ee_pos[1])
+                middle_position = (target_ee_pos[0] - 1.0, target_ee_pos[1])
+                waypoints = [curr_position ,middle_position,target_position]
             else:
                 target_position = (curr_position[0] + signed_dist * math.cos(target_heading), curr_position[1] + signed_dist * math.sin(target_heading))
                 waypoints = [curr_position, target_position]
