@@ -3,6 +3,8 @@
 
 import argparse
 import time
+import json
+import os
 from itertools import count
 from constants import POLICY_CONTROL_PERIOD
 from episode_storage import EpisodeWriter
@@ -10,6 +12,48 @@ from policies import TeleopPolicy, RemotePolicy, MotionPlannerPolicy
 from policies import MotionPlannerPolicyStackWrapper
 from policies import MotionPlannerPolicyStackThreeWrapper
 import numpy as np
+
+def load_vlm_target_locations(vlm_json_path):
+    """
+    Load target locations from VLM JSON output file.
+    
+    Args:
+        vlm_json_path (str): Path to the VLM JSON output file
+        
+    Returns:
+        list: List of numpy arrays representing target locations [x, y, z]
+    """
+    try:
+        with open(vlm_json_path, 'r') as f:
+            vlm_data = json.load(f)
+        
+        target_locations = []
+        x_offset = 0.7
+        y_offset = -0.2
+        z_offset = 0.38
+        for cup_data in vlm_data:
+            cup_id = cup_data['cup_id']
+            position = cup_data['position']
+            # Convert to numpy array and ensure proper format
+            target_loc = np.array([position['x'] + x_offset, position['y'] + y_offset, position['z'] + z_offset])
+            target_locations.append(target_loc)
+            print(f"Loaded cup {cup_id} target location: {target_loc}")
+        
+        print(f"Successfully loaded {len(target_locations)} target locations from VLM output")
+        return target_locations
+        
+    except FileNotFoundError:
+        print(f"Error: VLM JSON file not found at {vlm_json_path}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON format in {vlm_json_path}: {e}")
+        return None
+    except KeyError as e:
+        print(f"Error: Missing required key in VLM JSON: {e}")
+        return None
+    except Exception as e:
+        print(f"Error loading VLM target locations: {e}")
+        return None
 
 def should_save_episode(writer):
     if len(writer) == 0:
@@ -150,14 +194,30 @@ def main(args):
         policy = MotionPlannerPolicyCustomGraspThreeWrapper()
     elif args.mp_policy_n_cupboard:
         from policies import MotionPlannerPolicyMPNCupboardWrapper
-        # Example target locations - can be customized
-        target_locations = [
-            np.array([0.8, 0.08, 0.38]),   # Center position
-            np.array([0.8, -0.08, 0.38]),  # Left position  
-            np.array([0.73, 0, 0.38]),     # Right position
-            np.array([0.8, 0.16, 0.38]),   # Far right position
-            np.array([0.8, -0.16, 0.38])   # Far left position
-        ]
+        
+        # Load target locations from VLM if specified, otherwise use default
+        if args.vlm:
+            target_locations = load_vlm_target_locations(args.vlm_json_path)
+            print('target_locations', target_locations)
+            # if target_locations is None:
+            #     print("Error: Failed to load VLM target locations, using default locations")
+            #     target_locations = [
+            #         np.array([0.8, 0.08, 0.38]),   # Center position
+            #         np.array([0.8, -0.08, 0.38]),  # Left position  
+            #         np.array([0.73, 0, 0.38]),     # Right position
+            #         np.array([0.8, 0.16, 0.38]),   # Far right position
+            #         np.array([0.8, -0.16, 0.38])   # Far left position
+            #     ]
+        else:
+            # Default target locations - can be customized
+            target_locations = [
+                np.array([1.0, 0.08, 0.38]),   # Center position
+                np.array([0.8, -0.08, 0.38]),  # Left position  
+                np.array([0.73, 0, 0.38]),     # Right position
+                np.array([0.8, 0.16, 0.38]),   # Far right position
+                np.array([0.8, -0.16, 0.38])   # Far left position
+            ]
+        
         # Custom grasp parameters (optional)
         grasp_params = {
             'GRASP_SUCCESS_THRESHOLD': 0.75,
@@ -192,6 +252,8 @@ if __name__ == '__main__':
     parser.add_argument('--mp_policy_cupboard', action='store_true', help='Enable new motion planner policy (cupboard mode) from agent/mp_policy.py')
     parser.add_argument('--mp_policy_three', action='store_true', help='Enable new motion planner policy (three sequential placements) from agent/mp_policy.py')
     parser.add_argument('--mp_policy_n_cupboard', action='store_true', help='Enable new motion planner policy (N sequential pick-place actions in cupboard) from agent/mp_policy.py')
+    parser.add_argument('--vlm', action='store_true', help='Use VLM-generated target locations for mp_policy_n_cupboard')
+    parser.add_argument('--vlm-json-path', type=str, default='VLM/vlm_target_locations.json', help='Path to VLM JSON output file containing target locations (default: VLM/vlm_target_locations.json)')
     parser.add_argument('--custom_grasp', action='store_true', help='Enable custom grasping mode for experimentation')
     parser.add_argument('--custom_grasp_three', action='store_true', help='Enable custom grasping mode for three sequential pick-place actions in cupboard environment')
     parser.add_argument('--stack_policy', action='store_true', help='Enable stacking policy (stack cubes)')

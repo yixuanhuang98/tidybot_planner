@@ -1318,7 +1318,7 @@ class MotionPlannerPolicyMPNCupboardWrapper(Policy):
         
         # Default grasping parameters
         default_grasp_params = {
-            'GRASP_SUCCESS_THRESHOLD': 0.75,
+            'GRASP_SUCCESS_THRESHOLD': 0.8,
             'PICK_LOWER_DIST': 0.09,
             'PICK_LIFT_DIST': 0.18
         }
