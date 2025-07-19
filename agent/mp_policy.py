@@ -116,16 +116,23 @@ class MotionPlannerPolicy(BaseAgent):
         arm_quat = obs['arm_quat']
         gripper_pos = obs['gripper_pos']
 
-        # Debug: Print current base pose
-        print(f"Current base pose: [{base_pose[0]:.3f}, {base_pose[1]:.3f}, {base_pose[2]:.3f}]")
-
+        
+        
         # State machine following controller.py pattern
         if self.state == 'idle':
             # Detect objects and plan new command
             detected_objects = self.detect_objects_from_ground_truth(obs)
+            
             if detected_objects:
                 # Create pick command
                 self.object_location = detected_objects[0]
+                
+                # Safety check: ensure object_location is a proper 3D array
+                if not hasattr(self.object_location, 'shape') or len(self.object_location.shape) != 1 or self.object_location.shape[0] != 3:
+                    print(f"ERROR: object_location is not a 3D position array. Shape: {self.object_location.shape if hasattr(self.object_location, 'shape') else 'no shape'}")
+                    print(f"ERROR: object_location value: {self.object_location}")
+                    return None
+                
                 # Set placement location relative to detected object (e.g., 50cm away)
                 if self.target_location is None:
                     self.target_location = np.array([
@@ -133,15 +140,14 @@ class MotionPlannerPolicy(BaseAgent):
                         self.object_location[1] + self.PLACEMENT_Y_OFFSET,        # Same Y as object
                         self.object_location[2] + self.PLACEMENT_Z_OFFSET,         # Same Z as object (table height)
                     ])
-                
                 pick_command = {
                     'primitive_name': 'pick',
                     'waypoints': [base_pose[:2].tolist(), self.object_location[:2].tolist()],
                     'object_3d_pos': self.object_location.copy()  # Store full 3D position
                 }
                 
-                print(f"Object detected at: {self.object_location}")
-                print(f"Target placement location: {self.target_location}")
+                print(f"Object detected at: [{self.object_location[0]:.3f}, {self.object_location[1]:.3f}, {self.object_location[2]:.3f}]")
+                print(f"Target placement location: [{self.target_location[0]:.3f}, {self.target_location[1]:.3f}, {self.target_location[2]:.3f}]")
                 print(f"Creating pick command with waypoints: {pick_command['waypoints']}")
                 
                 # Build base command and start moving
@@ -796,27 +802,25 @@ class MotionPlannerPolicy(BaseAgent):
         """Detect objects using ground truth from MuJoCo simulation and find the one with smallest x value"""
         detected_objects = []
         
-        # Get all three cube positions from MuJoCo environment
+        # Get all object positions from MuJoCo environment dynamically
         cubes = []
-        for i in range(1, 4):
-            cube_key = f'cube{i}_pos'
-            if cube_key in obs:
-                cube_pos = obs[cube_key].copy()
-                cubes.append((cube_pos, i))
-                print(f"Detected cube {i} at position: {cube_pos}")
-            else:
-                print(f"Warning: {cube_key} not found in observation")
+        for key in obs.keys():
+            if key.endswith('_pos') and not key.startswith('arm_') and not key.startswith('base_') and not key.startswith('left_') and not key.startswith('right_') and not key.startswith('gripper_'):
+                cube_pos = obs[key].copy()
+                cube_name = key.replace('_pos', '')
+                cubes.append((cube_pos, cube_name))
+                print(f"Detected {cube_name} at position: {cube_pos}")
         
         if cubes:
             # Sort cubes by x position and select the one with smallest x value
             if self.custom_grasp:
                 cubes.sort(key=lambda x: x[0][1]) # sort by y
-                target_cube_pos, target_cube_id = cubes[0]
+                target_cube_pos, target_cube_name = cubes[0]
             else:
                 cubes.sort(key=lambda x: x[0][0])  # Sort by x coordinate (first element of position)
-                target_cube_pos, target_cube_id = cubes[0]
+                target_cube_pos, target_cube_name = cubes[0]
             detected_objects.append(target_cube_pos)
-            print(f"Selected cube {target_cube_id} with smallest x value: {target_cube_pos[0]:.3f}")
+            print(f"Selected {target_cube_name} with smallest x value: {target_cube_pos[0]:.3f}")
         
         return detected_objects
 
@@ -831,7 +835,7 @@ class MotionPlannerPolicy(BaseAgent):
     def get_end_effector_offset(self, primitive_name):
         """Calculate end-effector offset based on task and gripper state from controller.py"""
         # Simplified version - assume gripper starts open
-        if self.cupboard_mode and primitive_name == 'pick':
+        if self.cupboard_mode and primitive_name == 'pick' and self.custom_grasp:
             return 0.7
         elif self.cupboard_mode and primitive_name == 'place':
             return 0.85
@@ -858,6 +862,7 @@ class MotionPlannerPolicy(BaseAgent):
         for idx in range(1, len(reversed_waypoints)):
             start = reversed_waypoints[idx - 1]
             end = reversed_waypoints[idx]
+            print('start, end', [start, end])
             d = (end[0] - start[0], end[1] - start[1])
             f = (start[0] - target_ee_pos[0], start[1] - target_ee_pos[1])
             t2 = self.intersect(d, f, end_effector_offset)
@@ -865,7 +870,7 @@ class MotionPlannerPolicy(BaseAgent):
                 new_waypoint = (start[0] + t2 * d[0], start[1] + t2 * d[1])
                 break
                 
-        if new_waypoint is not None and not self.custom_grasp:
+        if new_waypoint is not None and not self.cupboard_mode:
             # Discard all waypoints that are too close to target_ee_pos
             waypoints = reversed_waypoints[idx:][::-1] + [new_waypoint]
         else:
@@ -876,7 +881,11 @@ class MotionPlannerPolicy(BaseAgent):
             dx = target_ee_pos[0] - curr_position[0]
             dy = target_ee_pos[1] - curr_position[1]
             target_heading = self.restrict_heading_range(math.atan2(dy, dx))
-            if self.custom_grasp and self.cupboard_mode:
+            if self.cupboard_mode and command['primitive_name'] == 'place':
+                target_position = (target_ee_pos[0] - end_effector_offset, target_ee_pos[1])
+                middle_position = (target_ee_pos[0] - 1.0, target_ee_pos[1])
+                waypoints = [curr_position ,middle_position,target_position]
+            elif self.custom_grasp and self.cupboard_mode:
                 if command['primitive_name'] == 'pick':
                     target_position = (target_ee_pos[0] - end_effector_offset, target_ee_pos[1])
                     middle_position = (target_ee_pos[0] - 1.0, target_ee_pos[1])

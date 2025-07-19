@@ -22,26 +22,43 @@ from constants import POLICY_CONTROL_PERIOD
 from ik_solver import IKSolver
 
 class ShmState:
-    def __init__(self, existing_instance=None):
-        arr = np.empty(3 + 3 + 4 + 1 + 1 + 9 + 12 + 6)  # Added 6 for 2 handle positions (2*3)
+    def __init__(self, existing_instance=None, num_objects=3, object_names=None):
+        # Calculate array size: 3 (base_pose) + 3 (arm_pos) + 4 (arm_quat) + 1 (gripper_pos) + 1 (initialized) + 
+        # num_objects * 7 (pos + quat for each object) + 6 (2 handle positions)
+        arr_size = 3 + 3 + 4 + 1 + 1 + num_objects * 7 + 6
+        arr = np.empty(arr_size)
         if existing_instance is None:
             self.shm = shared_memory.SharedMemory(create=True, size=arr.nbytes)
         else:
             self.shm = shared_memory.SharedMemory(name=existing_instance.shm.name)
         self.data = np.ndarray(arr.shape, buffer=self.shm.buf)
+        
+        # Fixed indices
         self.base_pose = self.data[:3]
         self.arm_pos = self.data[3:6]
         self.arm_quat = self.data[6:10]
         self.gripper_pos = self.data[10:11]
         self.initialized = self.data[11:12]
-        self.cube1_pos = self.data[12:15]
-        self.cube2_pos = self.data[15:18]
-        self.cube3_pos = self.data[18:21]
-        self.cube1_quat = self.data[21:25]
-        self.cube2_quat = self.data[25:29]
-        self.cube3_quat = self.data[29:33]
-        self.left_handle_pos = self.data[33:36]
-        self.right_handle_pos = self.data[36:39]
+        
+        # Dynamic object tracking
+        self.num_objects = num_objects
+        self.object_names = object_names if object_names is not None else [f'cube{i+1}' for i in range(num_objects)]
+        self.object_positions = []
+        self.object_quaternions = []
+        
+        # Calculate starting index for objects (after fixed fields)
+        obj_start_idx = 12
+        for i in range(num_objects):
+            pos_start = obj_start_idx + i * 7
+            quat_start = pos_start + 3
+            self.object_positions.append(self.data[pos_start:pos_start + 3])
+            self.object_quaternions.append(self.data[quat_start:quat_start + 4])
+        
+        # Handle positions (after all objects)
+        handle_start_idx = obj_start_idx + num_objects * 7
+        self.left_handle_pos = self.data[handle_start_idx:handle_start_idx + 3]
+        self.right_handle_pos = self.data[handle_start_idx + 3:handle_start_idx + 6]
+        
         self.initialized[:] = 0.0
 
     def close(self):
@@ -225,11 +242,13 @@ class MujocoSim:
         self.cupboard_scene = cupboard_scene
         self.cabinet_scene = cabinet_scene
 
+        # Dynamically detect objects from the model
+        self.detect_objects()
+        
         # Enable gravity compensation for everything except objects
         self.model.body_gravcomp[:] = 1.0
-        body_names = {self.model.body(i).name for i in range(self.model.nbody)}
-        for object_name in ['cube1', 'cube2', 'cube3']:
-            if object_name in body_names:
+        for object_name in self.object_names:
+            if object_name in self.body_names:
                 self.model.body_gravcomp[self.model.body(object_name).id] = 0.0
 
         # Cache references to array slices
@@ -243,17 +262,20 @@ class MujocoSim:
         ctrl_arm = self.data.ctrl[base_dofs:(base_dofs + arm_dofs)]
         self.qpos_gripper = self.data.qpos[(base_dofs + arm_dofs):(base_dofs + arm_dofs + 1)]
         ctrl_gripper = self.data.ctrl[(base_dofs + arm_dofs):(base_dofs + arm_dofs + 1)]
-        # Track all three cubes (8 for gripper qpos, 7 for each cube qpos)
-        self.qpos_cube1 = self.data.qpos[(base_dofs + arm_dofs + 8):(base_dofs + arm_dofs + 8 + 7)]
-        self.qpos_cube2 = self.data.qpos[(base_dofs + arm_dofs + 8 + 7):(base_dofs + arm_dofs + 8 + 14)]
-        self.qpos_cube3 = self.data.qpos[(base_dofs + arm_dofs + 8 + 14):(base_dofs + arm_dofs + 8 + 21)]
+        
+        # Dynamically track object qpos arrays
+        self.qpos_objects = []
+        current_idx = base_dofs + arm_dofs + 8  # After gripper
+        for i in range(self.num_objects):
+            self.qpos_objects.append(self.data.qpos[current_idx:current_idx + 7])
+            current_idx += 7
 
         # Controllers
         self.base_controller = BaseController(self.qpos_base, qvel_base, ctrl_base, self.model.opt.timestep)
         self.arm_controller = ArmController(qpos_arm, qvel_arm, ctrl_arm, self.qpos_gripper, ctrl_gripper, self.model.opt.timestep)
 
         # Shared memory state for observations
-        self.shm_state = ShmState(existing_instance=shm_state)
+        self.shm_state = ShmState(existing_instance=shm_state, num_objects=self.num_objects, object_names=self.object_names)
 
         # Variables for calculating arm pos and quat
         site_id = self.model.site('pinch_site').id
@@ -270,13 +292,29 @@ class MujocoSim:
         # Set control callback
         mujoco.set_mjcb_control(self.control_callback)
 
+    def detect_objects(self):
+        """Dynamically detect objects from the MuJoCo model"""
+        self.body_names = {self.model.body(i).name for i in range(self.model.nbody)}
+        
+        # Find all objects that match the pattern 'cube' + number
+        import re
+        self.object_names = []
+        for body_name in self.body_names:
+            if re.match(r'cube\d+', body_name):
+                self.object_names.append(body_name)
+        
+        # Sort by name to ensure consistent ordering
+        self.object_names.sort()
+        self.num_objects = len(self.object_names)
+        
+        print(f"Detected {self.num_objects} objects: {self.object_names}")
+
     def reset(self):
         # Reset simulation
         mujoco.mj_resetData(self.model, self.data)
 
-        # Randomize positions and orientations for all three cubes
-        cubes = [self.qpos_cube1, self.qpos_cube2, self.qpos_cube3]
-        for i, cube_qpos in enumerate(cubes):
+        # Randomize positions and orientations for all detected objects
+        for i, (object_name, cube_qpos) in enumerate(zip(self.object_names, self.qpos_objects)):
             # Randomize position within a reasonable range around the table
             if not self.cupboard_scene and not self.cabinet_scene:
                 if not self.table_scene:
@@ -289,7 +327,7 @@ class MujocoSim:
             theta = np.random.uniform(-math.pi, math.pi)
             cube_qpos[3:7] = np.array([math.cos(theta / 2), 0, 0, math.sin(theta / 2)])
             
-            print(f"Cube {i+1} reset to position: [{cube_qpos[0]:.3f}, {cube_qpos[1]:.3f}, {cube_qpos[2]:.3f}], theta: {theta:.3f}")
+            print(f"{object_name} reset to position: [{cube_qpos[0]:.3f}, {cube_qpos[1]:.3f}, {cube_qpos[2]:.3f}], theta: {theta:.3f}")
         
         mujoco.mj_forward(self.model, self.data)
 
@@ -326,13 +364,11 @@ class MujocoSim:
         # Update gripper pos
         self.shm_state.gripper_pos[:] = self.qpos_gripper / 0.8  # right_driver_joint, joint range [0, 0.8]
 
-        # Update all three cube positions and quaternions
-        self.shm_state.cube1_pos[:] = self.qpos_cube1[:3]  # First 3 elements are position
-        self.shm_state.cube1_quat[:] = self.qpos_cube1[3:7]  # Next 4 elements are quaternion
-        self.shm_state.cube2_pos[:] = self.qpos_cube2[:3]
-        self.shm_state.cube2_quat[:] = self.qpos_cube2[3:7]
-        self.shm_state.cube3_pos[:] = self.qpos_cube3[:3]
-        self.shm_state.cube3_quat[:] = self.qpos_cube3[3:7]
+        # Update all object positions and quaternions
+        for i, (object_name, qpos_obj) in enumerate(zip(self.object_names, self.qpos_objects)):
+            self.shm_state.object_positions[i][:] = qpos_obj[:3]  # First 3 elements are position
+            self.shm_state.object_quaternions[i][:] = qpos_obj[3:7]  # Next 4 elements are quaternion
+        
         # Update handle positions if cabinet_scene
         if self.cabinet_scene:
             try:
@@ -386,13 +422,24 @@ class MujocoEnv:
         self.cabinet_scene = cabinet_scene
         self.custom_grasp = custom_grasp
 
+        # Detect objects from the model to determine shared memory size
+        model = mujoco.MjModel.from_xml_path(self.mjcf_path)
+        body_names = {model.body(i).name for i in range(model.nbody)}
+        import re
+        object_names = []
+        for body_name in body_names:
+            if re.match(r'cube\d+', body_name):
+                object_names.append(body_name)
+        object_names.sort()
+        num_objects = len(object_names)
+        print(f"Detected {num_objects} objects in scene: {object_names}")
+
         # Shared memory for state observations
-        self.shm_state = ShmState()
+        self.shm_state = ShmState(num_objects=num_objects, object_names=object_names)
 
         # Shared memory for image observations
         if self.render_images:
             self.shm_images = []
-            model = mujoco.MjModel.from_xml_path(self.mjcf_path)
             for camera_id in range(model.ncam):
                 camera_name = model.camera(camera_id).name
                 width, height = model.cam_resolution[camera_id]
@@ -459,31 +506,30 @@ class MujocoEnv:
         if arm_quat[3] < 0.0:  # Enforce quaternion uniqueness
             np.negative(arm_quat, out=arm_quat)
         
-        # Process all three cube quaternions
-        cube1_quat = self.shm_state.cube1_quat[[1, 2, 3, 0]]  # (w, x, y, z) -> (x, y, z, w)
-        if cube1_quat[3] < 0.0:  # Enforce quaternion uniqueness
-            np.negative(cube1_quat, out=cube1_quat)
-            
-        cube2_quat = self.shm_state.cube2_quat[[1, 2, 3, 0]]  # (w, x, y, z) -> (x, y, z, w)
-        if cube2_quat[3] < 0.0:  # Enforce quaternion uniqueness
-            np.negative(cube2_quat, out=cube2_quat)
-            
-        cube3_quat = self.shm_state.cube3_quat[[1, 2, 3, 0]]  # (w, x, y, z) -> (x, y, z, w)
-        if cube3_quat[3] < 0.0:  # Enforce quaternion uniqueness
-            np.negative(cube3_quat, out=cube3_quat)
-            
+        # Process all object quaternions
         obs = {
             'base_pose': self.shm_state.base_pose.copy(),
             'arm_pos': self.shm_state.arm_pos.copy(),
             'arm_quat': arm_quat,
             'gripper_pos': self.shm_state.gripper_pos.copy(),
-            'cube1_pos': self.shm_state.cube1_pos.copy(),
-            'cube1_quat': cube1_quat,
-            'cube2_pos': self.shm_state.cube2_pos.copy(),
-            'cube2_quat': cube2_quat,
-            'cube3_pos': self.shm_state.cube3_pos.copy(),
-            'cube3_quat': cube3_quat,
         }
+        
+        
+        
+        for i, object_name in enumerate(self.shm_state.object_names):
+            if i < len(self.shm_state.object_positions):
+                obj_pos = self.shm_state.object_positions[i].copy()
+                obj_quat = self.shm_state.object_quaternions[i].copy()
+                
+                
+                # Convert quaternion format (w, x, y, z) -> (x, y, z, w)
+                obj_quat_converted = obj_quat[[1, 2, 3, 0]]
+                if obj_quat_converted[3] < 0.0:  # Enforce quaternion uniqueness
+                    np.negative(obj_quat_converted, out=obj_quat_converted)
+                
+                obs[f'{object_name}_pos'] = obj_pos
+                obs[f'{object_name}_quat'] = obj_quat_converted
+        
         if self.cabinet_scene:
             obs['left_handle_pos'] = self.shm_state.left_handle_pos.copy()
             obs['right_handle_pos'] = self.shm_state.right_handle_pos.copy()
@@ -520,7 +566,12 @@ if __name__ == '__main__':
                 }
                 env.step(action)
                 obs = env.get_obs()
-                print(f"Cube1 pos: {obs['cube1_pos']}, Cube2 pos: {obs['cube2_pos']}, Cube3 pos: {obs['cube3_pos']}")
+                # Print object positions dynamically
+                object_positions = []
+                for key in obs.keys():
+                    if key.endswith('_pos') and not key.startswith('arm_') and not key.startswith('base_') and not key.startswith('left_') and not key.startswith('right_'):
+                        object_positions.append(f"{key}: {obs[key]}")
+                print(f"Object positions: {', '.join(object_positions)}")
                 print([(k, v.shape) if v.ndim == 3 else (k, v) for (k, v) in obs.items()])
                 time.sleep(POLICY_CONTROL_PERIOD)  # Note: Not precise
     finally:

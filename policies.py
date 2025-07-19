@@ -442,9 +442,6 @@ class MotionPlannerPolicy(Policy):
         arm_quat = obs['arm_quat']
         gripper_pos = obs['gripper_pos']
 
-        # Debug: Print current base pose
-        print(f"Current base pose: [{base_pose[0]:.3f}, {base_pose[1]:.3f}, {base_pose[2]:.3f}]")
-
         # State machine following controller.py pattern
         if self.state == 'idle':
             # Detect objects and plan new command
@@ -843,23 +840,21 @@ class MotionPlannerPolicy(Policy):
         """Detect objects using ground truth from MuJoCo simulation and find the one with smallest x value"""
         detected_objects = []
         
-        # Get all three cube positions from MuJoCo environment
+        # Get all object positions from MuJoCo environment dynamically
         cubes = []
-        for i in range(1, 4):
-            cube_key = f'cube{i}_pos'
-            if cube_key in obs:
-                cube_pos = obs[cube_key].copy()
-                cubes.append((cube_pos, i))
-                print(f"Detected cube {i} at position: {cube_pos}")
-            else:
-                print(f"Warning: {cube_key} not found in observation")
+        for key in obs.keys():
+            if key.endswith('_pos') and not key.startswith('arm_') and not key.startswith('base_') and not key.startswith('left_') and not key.startswith('right_'):
+                cube_pos = obs[key].copy()
+                cube_name = key.replace('_pos', '')
+                cubes.append((cube_pos, cube_name))
+                print(f"Detected {cube_name} at position: {cube_pos}")
         
         if cubes:
             # Sort cubes by x position and select the one with smallest x value
             cubes.sort(key=lambda x: x[0][0])  # Sort by x coordinate (first element of position)
-            target_cube_pos, target_cube_id = cubes[0]
+            target_cube_pos, target_cube_name = cubes[0]
             detected_objects.append(target_cube_pos)
-            print(f"Selected cube {target_cube_id} with smallest x value: {target_cube_pos[0]:.3f}")
+            print(f"Selected {target_cube_name} with smallest x value: {target_cube_pos[0]:.3f}")
         
         return detected_objects
 
