@@ -27,7 +27,7 @@ class MotionPlannerTableStackPolicy(BaseAgent):
     LOOKAHEAD_DISTANCE = 0.3  # 30 cm
     POSITION_TOLERANCE = 0.005  # 0.5 cm (reduced from 1.5 cm)
     HEADING_TOLERANCE = math.radians(2.1)  # 2.1 degrees
-    GRASP_BASE_TOLERANCE = 0.002  # 0.2 cm for grasp
+    GRASP_BASE_TOLERANCE = 0.006  # 0.6 cm for grasp
     PLACE_BASE_TOLERANCE = 0.005   # 0.5 cm for placement (example, adjust as needed)
     
     # Table environment parameters

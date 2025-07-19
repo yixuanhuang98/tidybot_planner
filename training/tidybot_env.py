@@ -69,7 +69,7 @@ class TidybotEnv(gym.Env):
             "observation.state": spaces.Box(
                 low=-np.inf, 
                 high=np.inf, 
-                shape=(19,),  # robot state (10) + cube positions (9)
+                shape=(20,),  # robot state (11) + cube positions (9)
                 dtype=np.float32
             ),
             "observation.images.base": spaces.Box(
@@ -248,12 +248,15 @@ class TidybotPolicyWrapper:
     def __init__(self):
         """Initialize the policy wrapper."""
         self.policy = MotionPlannerTableStackPolicy()
-        self.episode_ended = False
+    
+    @property
+    def episode_ended(self):
+        """Check if episode has ended from the policy."""
+        return self.policy.episode_ended
     
     def reset(self):
         """Reset the policy for a new episode."""
         self.policy.reset()
-        self.episode_ended = False
     
     def select_action(self, obs: Dict[str, Any]) -> np.ndarray:
         """
@@ -273,7 +276,6 @@ class TidybotPolicyWrapper:
         
         if action_dict is None:
             # Policy has finished or failed
-            self.episode_ended = True
             # Return zero action
             return np.zeros(11, dtype=np.float32)
         

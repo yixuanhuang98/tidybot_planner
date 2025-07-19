@@ -80,7 +80,7 @@ def collect_tidybot_dataset(
     features = {
         "observation.state": {
             "dtype": "float32",
-            "shape": (20,),  # robot state (10) + cube positions (9)
+            "shape": (20,),
             "names": [
                 "base_x", "base_y", "base_theta",
                 "arm_x", "arm_y", "arm_z", 

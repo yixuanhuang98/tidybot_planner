@@ -77,7 +77,7 @@ def main():
         --policy-path outputs/train/tidybot_demo/final \\
         --dataset-repo-id {repo_id} \\
         --num-episodes 1 \\
-        --max-steps 500 \\
+        --max-steps 3000 \\
         --save-videos \\
         --video-dir evaluation_videos \\
         --output-file evaluation_results.json"""
