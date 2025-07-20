@@ -289,8 +289,6 @@ class MotionPlannerPolicyCabinetMP(BaseAgent):
                             else:
                                 print(f"Grasp timeout reached, proceeding with current grip: {gripper_pos[0]:.3f}")
                             
-                            print("Object lifted successfully! Now moving to placement location.")
-                            # Create place command
                             
                             
                             place_command = {
