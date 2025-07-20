@@ -175,8 +175,12 @@ def main(args):
             from policies import MotionPlannerPolicyMPCupboardWrapper
             policy = MotionPlannerPolicyMPCupboardWrapper(custom_grasp=args.custom_grasp)
         elif args.cabinet_scene:
-            from policies import MotionPlannerPolicyMPCabinetWrapper
-            policy = MotionPlannerPolicyMPCabinetWrapper(custom_grasp=args.custom_grasp)
+            if args.mp_policy_two_phase:
+                from policies import MotionPlannerPolicyMPCabinetTwoPhaseWrapper
+                policy = MotionPlannerPolicyMPCabinetTwoPhaseWrapper(custom_grasp=args.custom_grasp)
+            else:
+                from policies import MotionPlannerPolicyMPCabinetWrapper
+                policy = MotionPlannerPolicyMPCabinetWrapper(custom_grasp=args.custom_grasp)
         else:
             from policies import MotionPlannerPolicyMPWrapper
             policy = MotionPlannerPolicyMPWrapper(custom_grasp=args.custom_grasp)
@@ -246,6 +250,7 @@ if __name__ == '__main__':
     parser.add_argument('--teleop', action='store_true')
     parser.add_argument('--mp_policy', action='store_true', help='Enable new motion planner policy from agent/mp_policy.py')
     parser.add_argument('--mp_policy_cupboard', action='store_true', help='Enable new motion planner policy (cupboard mode) from agent/mp_policy.py')
+    parser.add_argument('--mp_policy_two_phase', action='store_true', help='Enable two-phase motion planner policy for cabinet (MotionPlannerPolicyCabinetMP then MotionPlannerPolicyCabinetMP_1)')
     parser.add_argument('--mp_policy_three', action='store_true', help='Enable new motion planner policy (three sequential placements) from agent/mp_policy.py')
     parser.add_argument('--mp_policy_n_cupboard', action='store_true', help='Enable new motion planner policy (N sequential pick-place actions in cupboard) from agent/mp_policy.py')
     parser.add_argument('--vlm', action='store_true', help='Use VLM-generated target locations for mp_policy_n_cupboard')

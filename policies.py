@@ -21,6 +21,7 @@ from agent.stack_policies import MotionPlannerPolicyStackDrawer  # <-- Add this 
 from agent.stack_policies import MotionPlannerPolicyStackCupboard  # <-- Add this import for cupboard stacking
 from agent.mp_policy import MotionPlannerPolicy as MotionPlannerPolicyMP  # Import new MP policy
 from agent.open_policy import MotionPlannerPolicyCabinetMP as MotionPlannerPolicyCabinetMP  # Import new MP policy
+from agent.open_policy import MotionPlannerPolicyCabinetMP_1 as MotionPlannerPolicyCabinetMP_1  # Import new MP policy for second phase
 
 class Policy:
     def reset(self):
@@ -590,6 +591,55 @@ class MotionPlannerPolicyMPCabinetWrapper(Policy):
         self.impl.reset()
     def step(self, obs):
         return self.impl.step(obs)
+
+# Motion planner policy for cabinet environment with two-phase execution
+class MotionPlannerPolicyMPCabinetTwoPhaseWrapper(Policy):
+    def __init__(self, custom_grasp=False):
+        # First phase: MotionPlannerPolicyCabinetMP
+        self.mp1 = MotionPlannerPolicyCabinetMP(custom_grasp=custom_grasp)
+        self.mp1.PLACEMENT_X_OFFSET = 0.6  # Distance to cabinet
+        self.mp1.PLACEMENT_Y_OFFSET = 0.0  # Center alignment
+        self.mp1.PLACEMENT_Z_OFFSET = 0.25  # Cabinet shelf height
+        self.mp1.target_location = np.array([0, -0.1, 0.25])  # Cabinet position
+        
+        # Second phase: MotionPlannerPolicyCabinetMP_1
+        self.mp2 = MotionPlannerPolicyCabinetMP_1(custom_grasp=custom_grasp)
+        self.mp2.PLACEMENT_X_OFFSET = 0.6  # Distance to cabinet
+        self.mp2.PLACEMENT_Y_OFFSET = 0.0  # Center alignment
+        self.mp2.PLACEMENT_Z_OFFSET = 0.25  # Cabinet shelf height
+        self.mp2.target_location = np.array([0, -0.1, 0.25])  # Cabinet position
+        
+        self.phase = 0
+        self.episode_ended = False
+        
+    def reset(self):
+        self.mp1.reset()
+        self.mp2.reset()
+        self.phase = 0
+        self.episode_ended = False
+        
+    def step(self, obs):
+        if self.episode_ended:
+            return None
+            
+        if self.phase == 0:
+            # Execute first phase (MotionPlannerPolicyCabinetMP)
+            action = self.mp1.step(obs)
+            if getattr(self.mp1, 'episode_ended', False):
+                self.phase = 1
+                self.mp2.reset()
+                print("First phase completed, starting second phase")
+            return action
+        elif self.phase == 1:
+            # Execute second phase (MotionPlannerPolicyCabinetMP_1)
+            action = self.mp2.step(obs)
+            if getattr(self.mp2, 'episode_ended', False):
+                self.phase = 2
+                self.episode_ended = True
+                print("Second phase completed, episode ended")
+            return action
+        else:
+            return None
 
 # Motion planner policy for three sequential placements
 class MotionPlannerPolicyMPThreeWrapper(Policy):
