@@ -41,6 +41,7 @@ class MotionPlannerPolicy(BaseAgent):
     PICK_LOWER_DIST = 0.08
     PICK_LIFT_DIST = 0.28  # Net lift is (PICK_LIFT_DIST - PICK_LOWER_DIST)
     PLACE_APPROACH_HEIGHT_OFFSET = 0.10
+    SIDE_PLACE_OFFSET = 0.1
 
     # Grasping parameters
     GRASP_SUCCESS_THRESHOLD = 0.7
@@ -309,8 +310,25 @@ class MotionPlannerPolicy(BaseAgent):
 
                         print(f"Step 4: Lifting object... target height: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
                         if np.allclose(arm_pos, target_arm_pos, atol=0.05):  # 5cm tolerance
-                            print("Object lifted successfully! Now moving to placement location.")
+                            print("Object lifted successfully! Now returning to home position.")
+                            self.grasp_state = PickState.RETURN_HOME
+                    
+                    elif self.grasp_state == PickState.RETURN_HOME:
+                        # Step 5: Return arm to home position before moving to placement
+                        arm_home_pos = np.array([[0.14322269, 0.0, 0.20784938]])
+                        # arm_home_pos = np.array([[0.1, 0.0, 0.2]])
+                        
+                        arm_home_quat = np.array([ 0.707, 0.707, 0, 0 ]) # np.array([1.0, 0.0, 0.0, 0.0])
+
+                        target_arm_pos = arm_home_pos
+                        target_arm_quat = arm_home_quat 
+                        target_gripper_pos = np.array([1.0])  # Gripper closed
+
+                        print(f"Step 5: Returning to home position... target: {target_arm_pos}, current: {arm_pos}")
+                        if np.allclose(arm_pos, target_arm_pos, atol=0.05):  # 5cm tolerance
+                            print("Arm returned to home position! Now moving to placement location.")
                             # Create place command
+
                             place_command = {
                                 'primitive_name': 'place',
                                 'waypoints': [base_pose[:2].tolist(), self.target_location[:2].tolist()],
@@ -640,13 +658,13 @@ class MotionPlannerPolicy(BaseAgent):
                     target_3d_pos = self.current_command['target_3d_pos']
                     # Calculate global position difference for approach (above target)
                     global_diff = np.array([
-                        target_3d_pos[0] - base_pose[0],
+                        target_3d_pos[0] - base_pose[0] - self.SIDE_PLACE_OFFSET,
                         target_3d_pos[1] - base_pose[1], 
                         target_3d_pos[2] + self.PLACE_APPROACH_HEIGHT_OFFSET - self.ROBOT_BASE_HEIGHT
                     ])
                     # For lowering, use no offset
                     global_diff_lower = np.array([
-                        global_diff[0] + 0.1,
+                        global_diff[0] + self.SIDE_PLACE_OFFSET,
                         global_diff[1],
                         global_diff[2]
                     ])

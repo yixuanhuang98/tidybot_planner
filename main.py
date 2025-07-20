@@ -28,9 +28,9 @@ def load_vlm_target_locations(vlm_json_path):
             vlm_data = json.load(f)
         
         target_locations = []
-        x_offset = 0.7
-        y_offset = -0.2
-        z_offset = 0.38
+        x_offset = 0.75
+        y_offset = -0.15
+        z_offset = 0.27 # 7 cm for the placement. 
         for cup_data in vlm_data:
             cup_id = cup_data['cup_id']
             position = cup_data['position']
@@ -199,6 +199,7 @@ def main(args):
         if args.vlm:
             target_locations = load_vlm_target_locations(args.vlm_json_path)
             print('target_locations', target_locations)
+            # time.sleep(15)
             # if target_locations is None:
             #     print("Error: Failed to load VLM target locations, using default locations")
             #     target_locations = [
@@ -211,7 +212,7 @@ def main(args):
         else:
             # Default target locations - can be customized
             target_locations = [
-                np.array([1.0, 0.08, 0.38]),   # Center position
+                np.array([0, 0, 0.38]),   # Center position
                 np.array([0.8, -0.08, 0.38]),  # Left position  
                 np.array([0.73, 0, 0.38]),     # Right position
                 np.array([0.8, 0.16, 0.38]),   # Far right position
@@ -219,15 +220,14 @@ def main(args):
             ]
         
         # Custom grasp parameters (optional)
-        grasp_params = {
-            'GRASP_SUCCESS_THRESHOLD': 0.75,
-            'PICK_LOWER_DIST': 0.09,
-            'PICK_LIFT_DIST': 0.18
-        }
+        # grasp_params = {
+        #     'GRASP_SUCCESS_THRESHOLD': 0.75,
+        #     'PICK_LOWER_DIST': 0.09,
+        #     'PICK_LIFT_DIST': 0.18
+        # }
         policy = MotionPlannerPolicyMPNCupboardWrapper(
             target_locations=target_locations,
-            custom_grasp=args.custom_grasp,
-            grasp_params=grasp_params if args.custom_grasp else None
+            custom_grasp=args.custom_grasp
         )
     elif args.teleop:
         from policies import TeleopPolicy

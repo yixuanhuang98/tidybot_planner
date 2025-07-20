@@ -4,7 +4,7 @@ import time
 import json
 
 # === CONFIGURATION ===
-IMAGE_PATH = "images/tidybot_sim_8objs.png"
+IMAGE_PATH = "images/8objs_small_2.png"
 API_KEY = "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"  # Replace with your key
 MODEL_NAME = "chatgpt-4o-latest"
 TEMPERATURE = 0.1
@@ -62,24 +62,24 @@ query_1 = """
 Given the image, identify the coordinate system origin and the 3D bounding box of the shelf. 
 The shelf has the following dimensions:
 
-Depth (x): 0.4 m
+Depth (x): 0.35 m
 
-Width (y): 0.2 m
+Width (y): 0.3 m
 
 Height (z): 0.4 m
 
-The object to place is a cup with dimensions (0.08, 0.08, 0.2) meters. 
+The object to place is a cup with dimensions (0.06, 0.14, 0.2) meters. 
 The 0.2 m side aligns with the +z axis (upright orientation).
+You will output the center of these objects. 
 
 Constraints: 
-- No cup-cup collision (add a small safety gap if needed)
-- No robot-cup collision (e.g., the robot trajectory should avoid colliding with any existing cups in the cupboard)
+- No cup-cup collision (add a small safety gap if needed and ensure the new cups are not colliding with any existing cups)
 - No cupboard-cup collision (e.g., the cup should not collide with any sides of the cupboard)
 
 Please confirm:
 - Origin of the coordinate system (position and orientation)
 - Direction of +x, +y, and +z
-- Shelf position and size in the robot's coordinate frame
+- Shelf position and size in the coordinate system 
 - The coordinates of the 8 corners of the cupboard 
 - where should I start placing cups to avoid collisions with the robot?
 
@@ -90,20 +90,17 @@ response_1 = append_and_send(query_1, step_id=1)
 query_2 = """
 
 Task:
-Please compute the 3D placement coordinates for 8 cups placed sequentially inside the shelf (from cup 1 to cup 8), ensuring:
-- No cup-cup collision (add a small safety gap if needed)
-- No robot-cup collision (e.g., the robot trajectory should avoid colliding with any existing cups in the cupboard)
-- No cupboard-cup collision (e.g., the cup should not collide with any sides of the cupboard)
+Please compute the 3D placement coordinates for 8 cups placed sequentially inside the shelf (from cup 1 to cup 8).
 
-
-The x axis represents the depth and the y axis represents the width. \n 
-
-Please assume the cups are placed on the bottom shelf. \n 
+Please assume the cups are placed on the bottom shelf but please ensure they are not collision with the bottom shelf. \n 
 
 Please first calculate how many rows and colums are needed and then calculate the placement parameters. \n
 
 For the output, could you return me a list of placement parameters for all cupds in JSON format. \n
 
+Please ensure:
+- No cup-cup collision (add a small safety gap if needed and ensure the new cups are not colliding with any existing cups)
+- No cupboard-cup collision (e.g., the cup should not collide with any sides of the cupboard)
 """
 response_2 = append_and_send(query_2, step_id=2)
 
@@ -113,8 +110,9 @@ Please validate the placement result from Step 2.
 
 Check for every:
 - No cup-cup collisions 
-- No robot-cup collision 
 - No cupboard-cup collision 
+
+Does it follow the how you should first place the cups? 
 
 If any placements are unsafe, return corrected placements. Otherwise, confirm all is valid.
 """

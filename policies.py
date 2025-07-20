@@ -1127,6 +1127,7 @@ class MotionPlannerPolicyMPWrapper(Policy):
         self.impl.PLACEMENT_X_OFFSET = 0.1
         self.impl.PLACEMENT_Y_OFFSET = 0.1
         self.impl.PLACEMENT_Z_OFFSET = 0.2
+        self.impl.target_location = np.array([0, 0, 0.5])
     def reset(self):
         self.impl.reset()
     def step(self, obs):
@@ -1318,7 +1319,7 @@ class MotionPlannerPolicyMPNCupboardWrapper(Policy):
         
         # Default grasping parameters
         default_grasp_params = {
-            'GRASP_SUCCESS_THRESHOLD': 0.8,
+            'GRASP_SUCCESS_THRESHOLD': 0.7,
             'PICK_LOWER_DIST': 0.09,
             'PICK_LIFT_DIST': 0.18
         }
@@ -1330,7 +1331,7 @@ class MotionPlannerPolicyMPNCupboardWrapper(Policy):
         # Create motion planner instances for each object
         self.motion_planners = []
         for i, target_loc in enumerate(target_locations):
-            mp = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=custom_grasp)
+            mp = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=True)
             mp.GRASP_SUCCESS_THRESHOLD = default_grasp_params['GRASP_SUCCESS_THRESHOLD']
             mp.PICK_LOWER_DIST = default_grasp_params['PICK_LOWER_DIST']
             mp.PICK_LIFT_DIST = default_grasp_params['PICK_LIFT_DIST']
