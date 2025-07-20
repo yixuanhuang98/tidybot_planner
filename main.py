@@ -170,9 +170,6 @@ def main(args):
     elif args.stack_policy:
         from policies import MotionPlannerPolicyStackWrapper
         policy = MotionPlannerPolicyStackWrapper()
-    elif args.motion_planner:
-        from policies import MotionPlannerPolicy
-        policy = MotionPlannerPolicy()
     elif args.mp_policy:
         if args.cupboard_scene:
             from policies import MotionPlannerPolicyMPCupboardWrapper
@@ -247,7 +244,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--sim', action='store_true')
     parser.add_argument('--teleop', action='store_true')
-    parser.add_argument('--motion_planner', action='store_true')
     parser.add_argument('--mp_policy', action='store_true', help='Enable new motion planner policy from agent/mp_policy.py')
     parser.add_argument('--mp_policy_cupboard', action='store_true', help='Enable new motion planner policy (cupboard mode) from agent/mp_policy.py')
     parser.add_argument('--mp_policy_three', action='store_true', help='Enable new motion planner policy (three sequential placements) from agent/mp_policy.py')
