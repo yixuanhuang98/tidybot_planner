@@ -7,3 +7,5 @@ simulation_images/
 outputs/
 evaluation_videos/
 *.json
+MUJOCO_LOG.TXT
+data/

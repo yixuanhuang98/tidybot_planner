@@ -4,6 +4,7 @@
 import argparse
 import time
 import threading
+import numpy as np
 from itertools import count
 from constants import POLICY_CONTROL_PERIOD
 from agent.teleop_policy import TeleopPolicy
@@ -15,6 +16,7 @@ from agent.mmmp_policy import MMMPPolicy
 from agent.motion_planner_stack_policy import MotionPlannerPolicyStack
 from agent.motion_planner_stack_policy_top import MotionPlannerPolicyStackTop
 from agent.motion_planner_table_stack_policy import MotionPlannerTableStackPolicy
+from agent.mp_policy import MotionPlannerPolicy_New
 
 def run_episode(env, policy):
     # Reset the env
@@ -80,14 +82,16 @@ def main(args):
     
     # Create env
     if args.sim:
-        from env.mujoco.mujoco_env import BlocksEnv, TableBlocksEnv, CabinetEnv, DrawerEnv
+        from env.mujoco.mujoco_env import BlocksEnv, TableBlocksEnv, CabinetEnv, DrawerEnv, CupboardEnv
         
         # Use headless mode but enable rendering if saving images or using web renderer
         render_images = args.save_images or args.web_renderer
         
-        # Use TableBlocksEnv for table stacking policy, otherwise use regular BlocksEnv
+        # Use appropriate environment based on policy
         if args.motion_planner_table_stack:
             env = TableBlocksEnv(render_images=render_images, show_viewer=False, max_episode_steps=100000, render_every_n_frames=100)
+        elif args.motion_planner_cupboard:
+            env = CupboardEnv(render_images=render_images, show_viewer=False, max_episode_steps=100000, render_every_n_frames=100)
         else:
             env = BlocksEnv(render_images=render_images, show_viewer=False, max_episode_steps=100000, render_every_n_frames=100)
         
@@ -153,6 +157,9 @@ def main(args):
         policy = MotionPlannerPolicyStack()
     elif args.motion_planner_table_stack:
         policy = MotionPlannerTableStackPolicy()
+    elif args.motion_planner_cupboard:
+        policy = MotionPlannerPolicy_New(cupboard_mode=True, custom_grasp=True)
+        policy.target_location = np.array([0.8, 0, 0.5])
     elif args.mmmp:
         policy = MMMPPolicy(socketio=socketio_instance)
     elif args.teleop:
@@ -199,6 +206,7 @@ if __name__ == '__main__':
     parser.add_argument('--motion_planner_stack', action='store_true', help='Stack cubes by picking the smallest x value cube and placing it on the largest x value cube')
     parser.add_argument('--motion_planner_stack_top', action='store_true', help='Stack cubes by picking the smallest x value cube and placing it on the largest x value cube')
     parser.add_argument('--motion_planner_table_stack', action='store_true', help='Stack cubes on table by picking the smallest x value cube and placing it on the largest x value cube')
+    parser.add_argument('--motion_planner_cupboard', action='store_true', help='Use new motion planner policy with cupboard mode and custom grasp enabled')
     parser.add_argument('--mmmp', action='store_true', help='Move gripper to left cabinet handle pose')
     parser.add_argument('--goto-cabinet-handle', action='store_true', help='Move gripper to left cabinet handle pose')
     parser.add_argument('--goto-cabinet-handle-right', action='store_true', help='Move gripper to right cabinet handle pose')

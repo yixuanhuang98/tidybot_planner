@@ -389,9 +389,9 @@ class MujocoHandler:
         # Reset MuJoCo data
         mujoco.mj_resetData(self.model, self.data)
         
-        # Do not randomize objects if they are on the table
-        if 'table' in self.mjcf_path:
-            print("Table scene detected, skipping object randomization.")
+        # Do not randomize objects if they are on the table or in cupboard mode
+        if 'table' in self.mjcf_path or 'cupboard' in self.mjcf_path:
+            print("Table or cupboard scene detected, skipping object randomization.")
         else:
             # Randomize cube positions
             for i, (obj_name, qpos) in enumerate(self.qpos_cubes.items()):

@@ -513,3 +513,126 @@ class DrawerEnv(AbstractMujocoEnv):
         """Check drawer-specific termination conditions"""
         # No additional termination conditions for drawer
         return False
+
+
+class CupboardEnv(AbstractMujocoEnv):
+    """Environment for cupboard manipulation tasks with objects inside"""
+    
+    def __init__(self, show_viewer: bool = False, render_images: bool = False,
+                 max_episode_steps: int = 1000, render_every_n_frames: int = 1):
+        super().__init__(
+            mjcf_path="env/assets/stanford_tidybot/cupboard_scene_objects_inside.xml",
+            show_viewer=show_viewer,
+            render_images=render_images,
+            max_episode_steps=max_episode_steps,
+            render_every_n_frames=render_every_n_frames
+        )
+
+    def _setup_spaces(self):
+        """Set up observation and action spaces for cupboard environment"""
+        # Action space: base pose (3), arm pose (3), arm quat (4), gripper (1)
+        self._action_space = Box(
+            low=np.array([-2.0, -2.0, -np.pi, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 0.0]),
+            high=np.array([2.0, 2.0, np.pi, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
+            dtype=np.float32
+        )
+        
+        # Observation space: robot state + cube states
+        obs_dict = {
+            'base_pose': Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
+            'arm_pos': Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
+            'arm_quat': Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32),
+            'gripper_pos': Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32),
+        }
+        
+        # Add cube observations
+        for obj_name in ['cube1', 'cube2', 'cube3']:
+            obs_dict[f'{obj_name}_pos'] = Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32)
+            obs_dict[f'{obj_name}_quat'] = Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
+        
+        self._observation_space = DictSpace(obs_dict)
+
+    def _get_scene_specific_observation(self, states: Dict[str, Any]) -> Dict[str, Any]:
+        """Get cube observations for cupboard environment"""
+        observation = {}
+        
+        # Cube observations
+        for obj_name in ['cube1', 'cube2', 'cube3']:
+            if f'{obj_name}_pos' in states:
+                observation[f'{obj_name}_pos'] = states[f'{obj_name}_pos'].astype(np.float32)
+            else:
+                observation[f'{obj_name}_pos'] = np.zeros(3, dtype=np.float32)
+            
+            if f'{obj_name}_quat' in states:
+                observation[f'{obj_name}_quat'] = states[f'{obj_name}_quat'].astype(np.float32)
+            else:
+                observation[f'{obj_name}_quat'] = np.array([0., 0., 0., 1.], dtype=np.float32)
+        
+        return observation
+
+    def _get_scene_specific_reward(self, states: Dict[str, Any]) -> float:
+        """Calculate reward for cupboard manipulation"""
+        reward = 0.0
+        
+        # Reward for keeping arm in reasonable workspace near cupboard
+        arm_pos = states['arm_pos']
+        cupboard_workspace_center = np.array([1.0, 0.0, 0.4])  # Cupboard center
+        arm_distance = np.linalg.norm(arm_pos - cupboard_workspace_center)
+        if arm_distance < 0.8:  # Larger workspace for cupboard
+            reward += 0.1
+        
+        # Reward for placing objects inside cupboard
+        cube1_pos = states.get('cube1_pos', np.zeros(3))
+        cube2_pos = states.get('cube2_pos', np.zeros(3))
+        cube3_pos = states.get('cube3_pos', np.zeros(3))
+        
+        # Check if cubes are inside cupboard (between x=0.8 and x=1.2, y between -0.3 and 0.3)
+        cupboard_x_min, cupboard_x_max = 0.8, 1.2
+        cupboard_y_min, cupboard_y_max = -0.3, 0.3
+        cupboard_z_min = 0.2  # Above cupboard bottom
+        
+        for cube_pos in [cube1_pos, cube2_pos, cube3_pos]:
+            if (cupboard_x_min < cube_pos[0] < cupboard_x_max and 
+                cupboard_y_min < cube_pos[1] < cupboard_y_max and 
+                cube_pos[2] > cupboard_z_min):
+                reward += 1.0  # Reward for each cube inside cupboard
+        
+        return reward
+
+    def _get_scene_specific_success(self, states: Dict[str, Any]) -> bool:
+        """Check if objects are successfully placed inside cupboard"""
+        cube1_pos = states.get('cube1_pos', np.zeros(3))
+        cube2_pos = states.get('cube2_pos', np.zeros(3))
+        cube3_pos = states.get('cube3_pos', np.zeros(3))
+        
+        # Success if at least one cube is inside cupboard
+        cupboard_x_min, cupboard_x_max = 0.8, 1.2
+        cupboard_y_min, cupboard_y_max = -0.3, 0.3
+        cupboard_z_min = 0.2
+        
+        for cube_pos in [cube1_pos, cube2_pos, cube3_pos]:
+            if (cupboard_x_min < cube_pos[0] < cupboard_x_max and 
+                cupboard_y_min < cube_pos[1] < cupboard_y_max and 
+                cube_pos[2] > cupboard_z_min):
+                return True
+        
+        return False
+
+    def _get_scene_specific_termination(self, states: Dict[str, Any]) -> bool:
+        """Check cupboard-specific termination conditions"""
+        # Terminate if robot goes too far from cupboard
+        base_pose = states['base_pose']
+        cupboard_center = np.array([1.0, 0.0])
+        distance_from_cupboard = np.linalg.norm(base_pose[:2] - cupboard_center)
+        
+        if distance_from_cupboard > 2.0:  # More than 2m from cupboard
+            print(f"Terminating: Robot too far from cupboard at distance {distance_from_cupboard:.3f}")
+            return True
+        
+        # Terminate if arm goes to unsafe position
+        arm_pos = states['arm_pos']
+        if arm_pos[2] < -0.1:  # Below ground
+            print(f"Terminating: Arm below ground at height {arm_pos[2]:.3f}")
+            return True
+        
+        return False
