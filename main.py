@@ -8,7 +8,7 @@ import os
 from itertools import count
 from constants import POLICY_CONTROL_PERIOD
 from episode_storage import EpisodeWriter
-from policies import TeleopPolicy, RemotePolicy, MotionPlannerPolicy
+from policies import TeleopPolicy, RemotePolicy
 from policies import MotionPlannerPolicyStackWrapper
 from policies import MotionPlannerPolicyStackThreeWrapper
 import numpy as np
