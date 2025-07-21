@@ -28,22 +28,17 @@
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
     
     <!-- Three cubes on the ground in front of the cabinet -->
-    <body name="cube1" pos="0.4 -0.4 0.02">
+    <body name="cube1" pos="0.75 -0.1 0.12">
         <freejoint/>
         <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001"/>
-        <geom type="box" size="0.02 0.02 0.02" rgba=".5 .7 .5 1" mass="0.1"/>
+        <geom type="box" size="0.02 0.02 0.06" rgba=".5 .7 .5 1" mass="0.1"/>
     </body>
-    <body name="cube2" pos="0.3 -0.4 0.02">
+    <body name="cube2" pos="0.75 -0.2 0.12">
         <freejoint/>
         <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001"/>
-        <geom type="box" size="0.02 0.02 0.02" rgba=".7 .5 .5 1" mass="0.1"/>
+        <geom type="box" size="0.02 0.02 0.06" rgba=".7 .5 .5 1" mass="0.1"/>
     </body>
-    <body name="cube3" pos="0.2 -0.4 0.02">
-        <freejoint/>
-        <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001"/>
-        <geom type="box" size="0.02 0.02 0.02" rgba=".5 .5 .7 1" mass="0.1"/>
-    </body>
-    
+
     <body name="interactive_obj" pos="1.0 0 .25" quat="-0.707 0 0 0.707">
        <include file="hingecabinet_body.xml"/>
        <joint name="interactive_obj_freejoint" type="free"/>

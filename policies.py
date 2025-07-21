@@ -594,49 +594,66 @@ class MotionPlannerPolicyMPCabinetWrapper(Policy):
 
 # Motion planner policy for cabinet environment with two-phase execution
 class MotionPlannerPolicyMPCabinetTwoPhaseWrapper(Policy):
-    def __init__(self, custom_grasp=False):
+    def __init__(self, custom_grasp=False, mp_configs=None):
+        """
+        Args:
+            custom_grasp (bool): Whether to use custom grasp
+            mp_configs (list): List of dicts, each specifying the class and kwargs for each phase, e.g.
+                [
+                    {'class': MotionPlannerPolicyCabinetMP, 'kwargs': {'custom_grasp': custom_grasp, 'open_left_cabinet': True}},
+                    {'class': MotionPlannerPolicyCabinetMP_1, 'kwargs': {'custom_grasp': False, 'open_left_cabinet': True}},
+                    ...
+                ]
+        """
+        
         # First phase: MotionPlannerPolicyCabinetMP
-        self.mp1 = MotionPlannerPolicyCabinetMP(custom_grasp=custom_grasp)
-        self.mp1.PLACEMENT_X_OFFSET = 0.6  # Distance to cabinet
-        self.mp1.PLACEMENT_Y_OFFSET = 0.0  # Center alignment
-        self.mp1.PLACEMENT_Z_OFFSET = 0.25  # Cabinet shelf height
-        self.mp1.target_location = np.array([0, -0.1, 0.25])  # Cabinet position
+        self.mp1 = MotionPlannerPolicyCabinetMP(custom_grasp=custom_grasp, open_left_cabinet=True)
         
         # Second phase: MotionPlannerPolicyCabinetMP_1
-        self.mp2 = MotionPlannerPolicyCabinetMP_1(custom_grasp=False)
-        self.mp2.PLACEMENT_X_OFFSET = 0.6  # Distance to cabinet
-        self.mp2.PLACEMENT_Y_OFFSET = 0.0  # Center alignment
-        self.mp2.PLACEMENT_Z_OFFSET = 0.25  # Cabinet shelf height
-        self.mp2.target_location = np.array([0, -0.1, 0.25])  # Cabinet position
+        self.mp2 = MotionPlannerPolicyCabinetMP_1(custom_grasp=False, open_left_cabinet=True)
+
+        # First phase: MotionPlannerPolicyCabinetMP
+        self.mp3 = MotionPlannerPolicyCabinetMP(custom_grasp=custom_grasp, open_left_cabinet=False)
         
+        # # Second phase: MotionPlannerPolicyCabinetMP_1
+        self.mp4 = MotionPlannerPolicyCabinetMP_1(custom_grasp=False, open_left_cabinet=False)
+
+
+        # self.mp5 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=True)
+        # self.mp5.target_location = np.array([0.75, -0.15, 0.38])  # Center position
+        # self.mp5.PICK_APPROACH_HEIGHT_OFFSET = 0.08
+        # self.mp5.PLACE_APPROACH_HEIGHT_OFFSET = 0.08
+
+        # self.mp6 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=True)
+        # self.mp6.target_location = np.array([0.75, -0.3, 0.38])  # Left position
+        # self.mp6.PICK_APPROACH_HEIGHT_OFFSET = 0.08
+        # self.mp6.PLACE_APPROACH_HEIGHT_OFFSET = 0.08
+
+        self.mps = [self.mp1, self.mp2, self.mp3, self.mp4]
+        
+        # self.mps = [self.mp1, self.mp2, self.mp3, self.mp4, self.mp5, self.mp6]
         self.phase = 0
         self.episode_ended = False
-        
+
     def reset(self):
-        self.mp1.reset()
-        self.mp2.reset()
+        for mp in self.mps:
+            mp.reset()
         self.phase = 0
         self.episode_ended = False
-        
+
     def step(self, obs):
         if self.episode_ended:
             return None
-            
-        if self.phase == 0:
-            # Execute first phase (MotionPlannerPolicyCabinetMP)
-            action = self.mp1.step(obs)
-            if getattr(self.mp1, 'episode_ended', False):
-                self.phase = 1
-                self.mp2.reset()
-                print("First phase completed, starting second phase")
-            return action
-        elif self.phase == 1:
-            # Execute second phase (MotionPlannerPolicyCabinetMP_1)
-            action = self.mp2.step(obs)
-            if getattr(self.mp2, 'episode_ended', False):
-                self.phase = 2
-                self.episode_ended = True
-                print("Second phase completed, episode ended")
+        if self.phase < len(self.mps):
+            action = self.mps[self.phase].step(obs)
+            if getattr(self.mps[self.phase], 'episode_ended', False):
+                self.phase += 1
+                if self.phase < len(self.mps):
+                    self.mps[self.phase].reset()
+                    print(f"Phase {self.phase} completed, starting next phase")
+                else:
+                    self.episode_ended = True
+                    print(f"All phases completed, episode ended")
             return action
         else:
             return None

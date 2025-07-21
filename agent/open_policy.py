@@ -53,13 +53,14 @@ class MotionPlannerPolicyCabinetMP(BaseAgent):
     GRASP_TIMEOUT_S = 3.0
     PLACE_SUCCESS_THRESHOLD = 0.2
 
-    def __init__(self, cupboard_mode=False, custom_grasp=False):
+    def __init__(self, cupboard_mode=False, custom_grasp=False, open_left_cabinet=False):
         """
         Initialize MotionPlannerPolicy
         
         Args:
             cupboard_mode (bool): Enable cupboard-specific placement behavior
             custom_grasp (bool): Enable experimental grasping parameters for testing
+            open_left_cabinet (bool): Whether to open the left cabinet (default: False)
         """
         # Motion planning state - following controller.py pattern
         self.state = 'idle'  # States: idle, moving, manipulating, grasping
@@ -82,6 +83,7 @@ class MotionPlannerPolicyCabinetMP(BaseAgent):
         
         self.cupboard_mode = cupboard_mode
         self.custom_grasp = custom_grasp
+        self.open_left_cabinet = open_left_cabinet
 
         self.base_target_away = None
         
@@ -335,11 +337,7 @@ class MotionPlannerPolicyCabinetMP(BaseAgent):
                     elif self.grasp_state == PickState.BACK:
                         # Step 4: Lift object from the grasping position 
 
-                        target_arm_pos = object_relative_pos.copy()
-                        target_arm_pos[2] -= self.PICK_LOWER_DIST  # Maintain lowered position
-                        target_arm_pos[0] -= 0.3
-                        target_arm_quat = rotated_arm_quat # np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
-                        target_gripper_pos = np.array([0.0])  # Close gripper
+                        
                         print('base_pose', base_pose)
                         print('target', self.base_target_away)
                         if np.allclose(base_pose, self.base_target_away, atol=0.01):
@@ -696,7 +694,10 @@ class MotionPlannerPolicyCabinetMP(BaseAgent):
             handles = [left, right]
             # Select handle with least y value
             handles.sort(key=lambda h: h[1])
-            target_handle = handles[0]
+            if self.open_left_cabinet:
+                target_handle = handles[0]
+            else:
+                target_handle = handles[1]
             detected_objects.append(target_handle)
             print(f"Selected handle with least y value: {target_handle}")
             return detected_objects
@@ -826,13 +827,14 @@ class MotionPlannerPolicyCabinetMP_1(BaseAgent):
     GRASP_TIMEOUT_S = 3.0
     PLACE_SUCCESS_THRESHOLD = 0.2
 
-    def __init__(self, cupboard_mode=False, custom_grasp=False):
+    def __init__(self, cupboard_mode=False, custom_grasp=False, open_left_cabinet=False):
         """
         Initialize MotionPlannerPolicy
         
         Args:
             cupboard_mode (bool): Enable cupboard-specific placement behavior
             custom_grasp (bool): Enable experimental grasping parameters for testing
+            open_left_cabinet (bool): Whether to open the left cabinet (default: False)
         """
         # Motion planning state - following controller.py pattern
         self.state = 'idle'  # States: idle, moving, manipulating, grasping
@@ -855,6 +857,7 @@ class MotionPlannerPolicyCabinetMP_1(BaseAgent):
         
         self.cupboard_mode = cupboard_mode
         self.custom_grasp = custom_grasp
+        self.open_left_cabinet = open_left_cabinet
 
         self.base_target_away = None
         
@@ -1116,9 +1119,17 @@ class MotionPlannerPolicyCabinetMP_1(BaseAgent):
                     target_arm_quat = arm_quat.copy()
                     target_gripper_pos = gripper_pos.copy()
 
-                    if self.base_target_away is None:
-                        self.base_target_away = np.array([base_pose[0] - 0.5, base_pose[1] - 0.2, base_pose[2]])
+                    # Home position (in base frame, e.g., [0.4, 0, 0.4])
+                    arm_home_pos = np.array([[0.14322269, 0.0, 0.20784938]])
+                    # arm_home_pos = np.array([[0.1, 0.0, 0.2]])
                     
+                    arm_home_quat = np.array([ 0.707, 0.707, 0, 0 ]) # np.array([1.0, 0.0, 0.0, 0.0])
+
+                    if self.base_target_away is None:
+                        if self.open_left_cabinet:
+                            self.base_target_away = np.array([base_pose[0] - 0.5, base_pose[1] - 0.5, base_pose[2]])
+                        else:
+                            self.base_target_away = np.array([base_pose[0] - 0.5, base_pose[1] + 0.5, base_pose[2]])
 
                     # Position arm above object and close gripper to grasp
                     object_3d_pos = self.current_command['object_3d_pos']
@@ -1183,8 +1194,19 @@ class MotionPlannerPolicyCabinetMP_1(BaseAgent):
                         print('target', self.base_target_away)
                         if np.allclose(base_pose, self.base_target_away, atol=0.01):
                             print("[GoToCabinetHandlePolicy] Finished moving base away with handle. Transitioning to done.")
-                            self.end_episode = True
-                            # self.grasp_state = PickState.HOME        
+                            self.grasp_state = PickState.HOME
+                            # self.grasp_state = PickState.HOME
+                    elif self.grasp_state == PickState.HOME:
+                        # Step 4: Move arm to home position
+                        target_arm_pos = arm_home_pos
+                        target_arm_quat = arm_home_quat
+                        target_gripper_pos = np.array([0.0])
+                        print(f"Step 4: Moving arm to home position")
+                        if np.allclose(arm_pos, target_arm_pos, atol=0.03):
+                            print("Arm at home position. Task complete.")
+                            self.episode_ended = True
+                            self.state = 'idle'
+
                        
                     
                     if self.grasp_state == PickState.BACK:
@@ -1390,9 +1412,14 @@ class MotionPlannerPolicyCabinetMP_1(BaseAgent):
             handles = [left, right]
             # Select handle with least y value
             handles.sort(key=lambda h: h[1])
-            target_handle = handles[0]
+            if self.open_left_cabinet:
+                target_handle = handles[0]
+                target_handle[1] += 0.05
+            else:
+                target_handle = handles[1]
+                target_handle[1] -= 0.05
             target_handle[0] += 0.2
-            target_handle[1] += 0.05
+            
             target_handle[2] += 0.2
             detected_objects.append(target_handle)
             print(f"Selected handle with least y value: {target_handle}")
