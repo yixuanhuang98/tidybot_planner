@@ -22,6 +22,8 @@ from agent.stack_policies import MotionPlannerPolicyStackCupboard  # <-- Add thi
 from agent.mp_policy import MotionPlannerPolicy as MotionPlannerPolicyMP  # Import new MP policy
 from agent.open_policy import MotionPlannerPolicyCabinetMP as MotionPlannerPolicyCabinetMP  # Import new MP policy
 from agent.open_policy import MotionPlannerPolicyCabinetMP_1 as MotionPlannerPolicyCabinetMP_1  # Import new MP policy for second phase
+from agent.open_policy import CloseCabinetPolicy as CloseCabinetPolicy  # Import new MP policy for second phase
+
 
 class Policy:
     def reset(self):
@@ -615,23 +617,29 @@ class MotionPlannerPolicyMPCabinetTwoPhaseWrapper(Policy):
         # First phase: MotionPlannerPolicyCabinetMP
         self.mp3 = MotionPlannerPolicyCabinetMP(custom_grasp=custom_grasp, open_left_cabinet=False)
         
-        # # Second phase: MotionPlannerPolicyCabinetMP_1
+        # Second phase: MotionPlannerPolicyCabinetMP_1
         self.mp4 = MotionPlannerPolicyCabinetMP_1(custom_grasp=False, open_left_cabinet=False)
+
+        # First phase: MotionPlannerPolicyCabinetMP
+        self.mp5 = CloseCabinetPolicy(custom_grasp=False, close_left_cabinet=True)
+        
+        # # Second phase: MotionPlannerPolicyCabinetMP_1
+        self.mp6 = CloseCabinetPolicy(custom_grasp=False, close_left_cabinet=False)
 
 
         # self.mp5 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=True)
         # self.mp5.target_location = np.array([0.75, -0.15, 0.38])  # Center position
-        # self.mp5.PICK_APPROACH_HEIGHT_OFFSET = 0.08
-        # self.mp5.PLACE_APPROACH_HEIGHT_OFFSET = 0.08
+        # self.mp5.PICK_APPROACH_HEIGHT_OFFSET = 0.05
+        # self.mp5.PLACE_APPROACH_HEIGHT_OFFSET = 0.05
 
         # self.mp6 = MotionPlannerPolicyMP(cupboard_mode=True, custom_grasp=True)
         # self.mp6.target_location = np.array([0.75, -0.3, 0.38])  # Left position
-        # self.mp6.PICK_APPROACH_HEIGHT_OFFSET = 0.08
-        # self.mp6.PLACE_APPROACH_HEIGHT_OFFSET = 0.08
+        # self.mp6.PICK_APPROACH_HEIGHT_OFFSET = 0.05
+        # self.mp6.PLACE_APPROACH_HEIGHT_OFFSET = 0.05
 
-        self.mps = [self.mp1, self.mp2, self.mp3, self.mp4]
+        # self.mps = [self.mp1, self.mp2, self.mp3]
         
-        # self.mps = [self.mp1, self.mp2, self.mp3, self.mp4, self.mp5, self.mp6]
+        self.mps = [self.mp1, self.mp2, self.mp3, self.mp4, self.mp5, self.mp6]
         self.phase = 0
         self.episode_ended = False
 
