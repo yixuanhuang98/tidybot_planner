@@ -250,7 +250,7 @@ class MotionPlannerPolicyCabinetMP(BaseAgent):
                     rotated_arm_quat = np.array([0.5, 0.5, 0.5, 0.5])
                     # rotated_arm_quat = np.array([0.6532815, 0.6532815, 0.27059805, 0.27059805]) ## 45 degrees point downward.
                     if self.base_target_away is None:
-                        self.base_target_away = np.array([base_pose[0] - 0.1, base_pose[1] - 0.05, base_pose[2]])
+                        self.base_target_away = np.array([base_pose[0] - 0.2, base_pose[1], base_pose[2]])
                     
                     
                     if self.grasp_state == PickState.APPROACH:
@@ -313,11 +313,11 @@ class MotionPlannerPolicyCabinetMP(BaseAgent):
 
                         target_arm_pos = object_relative_pos.copy()
                         target_arm_pos[2] -= self.PICK_LOWER_DIST  # Maintain lowered position
+                        target_arm_pos[0] -= 0.1
                         target_arm_quat = rotated_arm_quat # np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
                         target_gripper_pos = np.array([1.0])  # Close gripper
-                        print('base_pose', base_pose)
-                        print('target', self.base_target_away)
-                        if np.allclose(base_pose, self.base_target_away, atol=0.01):
+
+                        if np.allclose(arm_pos, target_arm_pos, atol=0.02): 
                             print("[GoToCabinetHandlePolicy] Finished moving base away with handle. Transitioning to done.")
                             self.grasp_state = PickState.RELEASE
                     
@@ -325,12 +325,27 @@ class MotionPlannerPolicyCabinetMP(BaseAgent):
                         # Step 3: Open gripper to place object
                         target_arm_pos = object_relative_pos.copy()
                         target_arm_pos[2] -= self.PICK_LOWER_DIST  # Maintain lowered position
+                        target_arm_pos[0] -= 0.1
                         target_arm_quat = rotated_arm_quat # np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
                         target_gripper_pos = np.array([0.0])  # Close gripper
                         print(f"Step 3: Opening gripper to release object")
                         if gripper_pos[0] < self.PLACE_SUCCESS_THRESHOLD:
-                            self.grasp_state = PickState.HOME
+                            self.grasp_state = PickState.BACK
                             print("Object placed, moving to home position...")
+                    elif self.grasp_state == PickState.BACK:
+                        # Step 4: Lift object from the grasping position 
+
+                        target_arm_pos = object_relative_pos.copy()
+                        target_arm_pos[2] -= self.PICK_LOWER_DIST  # Maintain lowered position
+                        target_arm_pos[0] -= 0.3
+                        target_arm_quat = rotated_arm_quat # np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
+                        target_gripper_pos = np.array([0.0])  # Close gripper
+                        print('base_pose', base_pose)
+                        print('target', self.base_target_away)
+                        if np.allclose(base_pose, self.base_target_away, atol=0.01):
+                            print("[GoToCabinetHandlePolicy] Finished moving base away with handle. Transitioning to done.")
+                            self.grasp_state = PickState.HOME        
+                             
                     elif self.grasp_state == PickState.HOME:
                         # Step 4: Move arm to home position
                         target_arm_pos = arm_home_pos
@@ -343,7 +358,8 @@ class MotionPlannerPolicyCabinetMP(BaseAgent):
                             self.state = 'idle'
                     
                     
-                    if self.grasp_state == PickState.LIFT:
+                    
+                    if self.grasp_state == PickState.BACK:
                         # Create action from targets
                         action = {
                             'base_pose': self.base_target_away.copy(),
@@ -717,7 +733,7 @@ class MotionPlannerPolicyCabinetMP(BaseAgent):
     def get_end_effector_offset(self, primitive_name):
         """Calculate end-effector offset based on task and gripper state from controller.py"""
         # Simplified version - assume gripper starts open
-        return 0.85
+        return 0.75
         
 
     def build_base_command(self, command):
@@ -1100,6 +1116,10 @@ class MotionPlannerPolicyCabinetMP_1(BaseAgent):
                     target_arm_quat = arm_quat.copy()
                     target_gripper_pos = gripper_pos.copy()
 
+                    if self.base_target_away is None:
+                        self.base_target_away = np.array([base_pose[0] - 0.5, base_pose[1] - 0.2, base_pose[2]])
+                    
+
                     # Position arm above object and close gripper to grasp
                     object_3d_pos = self.current_command['object_3d_pos']
                     # Calculate global position difference with better approach height
@@ -1132,7 +1152,7 @@ class MotionPlannerPolicyCabinetMP_1(BaseAgent):
                         # Step 1: Position arm well above object with open gripper (safe approach)
                         target_arm_pos = object_relative_pos
                         target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
-                        target_gripper_pos = np.array([0.0])  # Gripper open
+                        target_gripper_pos = np.array([1.0])  # Gripper open
 
                         print(f"Step 1: Positioning arm above object with open gripper")
                         if np.allclose(arm_pos, target_arm_pos, atol=0.03):  # Tighter tolerance: 3cm
@@ -1144,86 +1164,45 @@ class MotionPlannerPolicyCabinetMP_1(BaseAgent):
                         target_arm_pos = object_relative_pos.copy()
                         target_arm_pos[2] -= self.PICK_LOWER_DIST  # Lower by 8cm for closer approach
                         target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
-                        target_gripper_pos = np.array([0.0])  # Gripper open
+                        target_gripper_pos = np.array([1.0])  # Gripper open
 
                         print(f"Step 2: Lowering gripper for precise approach... target: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
                         if np.allclose(arm_pos, target_arm_pos, atol=0.02):  # Very tight tolerance: 2cm
-                            self.grasp_state = PickState.GRASP
+                            self.grasp_state = PickState.BACK
                             print("Gripper lowered to grasping position, closing gripper")
                     
-                    elif self.grasp_state == PickState.GRASP:
-                        # Step 3: Close gripper to grasp
-                        target_arm_pos = object_relative_pos.copy()
-                        target_arm_pos[2] -= self.PICK_LOWER_DIST  # Maintain lowered position
-                        target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
-                        target_gripper_pos = np.array([1.0])  # Close gripper
+                    elif self.grasp_state == PickState.BACK:
+                        # Step 4: Lift object from the grasping position 
 
-                        print(f"Step 3: Closing gripper... current position: {gripper_pos[0]:.3f}")
+                        # target_arm_pos = object_relative_pos.copy()
+                        # target_arm_pos[2] -= self.PICK_LOWER_DIST  # Lower by 8cm for closer approach
+                        # target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
+                        # target_gripper_pos = np.array([1.0])  # Gripper open
                         
-                        # Initialize grasp attempt tracking
-                        if not hasattr(self, 'grasp_start_time'):
-                            self.grasp_start_time = time.time()
-                            self.initial_gripper_pos = gripper_pos[0]
-                            print(f"Started grasp attempt, initial gripper pos: {self.initial_gripper_pos:.3f}")
-                        
-                        # Check for successful grasp (multiple criteria)
-                        gripper_closed_enough = gripper_pos[0] > self.GRASP_SUCCESS_THRESHOLD
-                        gripper_progress = (gripper_pos[0] - self.initial_gripper_pos) > self.GRASP_PROGRESS_THRESHOLD
-                        grasp_timeout = (time.time() - self.grasp_start_time) > self.GRASP_TIMEOUT_S
-                        
-                        if gripper_closed_enough or gripper_progress or grasp_timeout:
-                            if gripper_closed_enough or gripper_progress:
-                                print(f"Grasp successful! Gripper pos: {gripper_pos[0]:.3f}, progress: {gripper_pos[0] - self.initial_gripper_pos:.3f}")
-                            else:
-                                print(f"Grasp timeout reached, proceeding with current grip: {gripper_pos[0]:.3f}")
-                            
-                            self.grasp_state = PickState.LIFT
-                            # Clean up tracking variables
-                            delattr(self, 'grasp_start_time')
-                            delattr(self, 'initial_gripper_pos')
-                            print("Moving to lift phase!")
+                        print('base_pose', base_pose)
+                        print('target', self.base_target_away)
+                        if np.allclose(base_pose, self.base_target_away, atol=0.01):
+                            print("[GoToCabinetHandlePolicy] Finished moving base away with handle. Transitioning to done.")
+                            self.end_episode = True
+                            # self.grasp_state = PickState.HOME        
+                       
                     
-                    elif self.grasp_state == PickState.LIFT:
-                        # Step 4: Lift object from the grasping position
-                        lifted_pos = object_relative_pos.copy()
-                        lifted_pos[2] += (self.PICK_LIFT_DIST - self.PICK_LOWER_DIST) # Net lift
-                        target_arm_pos = lifted_pos
-                        target_arm_quat = np.array([1.0, 0.0, 0.0, 0.0])  # Gripper down
-                        target_gripper_pos = np.array([1.0])  # Gripper closed
-
-                        print(f"Step 4: Lifting object... target height: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
-                        if np.allclose(arm_pos, target_arm_pos, atol=0.05):  # 5cm tolerance
-                            print("Object lifted successfully! Now moving to placement location.")
-                            # Create place command
-
-                            place_command = {
-                                'primitive_name': 'place',
-                                'waypoints': [base_pose[:2].tolist(), self.target_location[:2].tolist()],
-                                'target_3d_pos': self.target_location.copy()
-                            }
-                            
-                            base_command = self.build_base_command(place_command)
-                            if base_command:
-                                self.current_command = place_command
-                                self.base_waypoints = base_command['waypoints']
-                                self.target_ee_pos = base_command['target_ee_pos']
-                                self.current_waypoint_idx = 1
-                                self.lookahead_position = None
-                                self.state = 'moving'
-                                self.grasp_state = None  # Reset for next manipulation
-                                print(f"Starting base movement to placement location at {self.target_location}")
-                            else:
-                                print("Failed to build place command")
-                                self.episode_ended = True
-                                self.state = 'idle'
-
-                    # Create action from targets
-                    action = {
-                        'base_pose': base_pose.copy(),
-                        'arm_pos': target_arm_pos,
-                        'arm_quat': target_arm_quat,
-                        'gripper_pos': target_gripper_pos,
-                    }
+                    if self.grasp_state == PickState.BACK:
+                        # Create action from targets
+                        action = {
+                            'base_pose': self.base_target_away.copy(),
+                            'arm_pos': target_arm_pos,
+                            'arm_quat': target_arm_quat,
+                            'gripper_pos': target_gripper_pos,
+                        }
+                    else:
+                        # Create action from targets
+                        action = {
+                            'base_pose': base_pose.copy(),
+                            'arm_pos': target_arm_pos,
+                            'arm_quat': target_arm_quat,
+                            'gripper_pos': target_gripper_pos,
+                        }
                     return action
 
             elif self.current_command['primitive_name'] == 'place':
@@ -1412,6 +1391,9 @@ class MotionPlannerPolicyCabinetMP_1(BaseAgent):
             # Select handle with least y value
             handles.sort(key=lambda h: h[1])
             target_handle = handles[0]
+            target_handle[0] += 0.2
+            target_handle[1] += 0.05
+            target_handle[2] += 0.2
             detected_objects.append(target_handle)
             print(f"Selected handle with least y value: {target_handle}")
             return detected_objects
@@ -1448,7 +1430,7 @@ class MotionPlannerPolicyCabinetMP_1(BaseAgent):
     def get_end_effector_offset(self, primitive_name):
         """Calculate end-effector offset based on task and gripper state from controller.py"""
         # Simplified version - assume gripper starts open
-        return 0.85
+        return 0.55
         
 
     def build_base_command(self, command):

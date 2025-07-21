@@ -603,7 +603,7 @@ class MotionPlannerPolicyMPCabinetTwoPhaseWrapper(Policy):
         self.mp1.target_location = np.array([0, -0.1, 0.25])  # Cabinet position
         
         # Second phase: MotionPlannerPolicyCabinetMP_1
-        self.mp2 = MotionPlannerPolicyCabinetMP_1(custom_grasp=custom_grasp)
+        self.mp2 = MotionPlannerPolicyCabinetMP_1(custom_grasp=False)
         self.mp2.PLACEMENT_X_OFFSET = 0.6  # Distance to cabinet
         self.mp2.PLACEMENT_Y_OFFSET = 0.0  # Center alignment
         self.mp2.PLACEMENT_Z_OFFSET = 0.25  # Cabinet shelf height
