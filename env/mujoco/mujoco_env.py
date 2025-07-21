@@ -13,13 +13,14 @@ class AbstractMujocoEnv(BaseEnv, ABC):
     """Abstract MuJoCo environment that can be inherited by different scene types"""
     
     def __init__(self, mjcf_path: str, show_viewer: bool = False, render_images: bool = False,
-                 max_episode_steps: int = 1000, render_every_n_frames: int = 1):
+                 max_episode_steps: int = 1000, render_every_n_frames: int = 1, save_images: bool = True):
         
         # Create handler
         self.handler = MujocoHandler(mjcf_path=mjcf_path, 
                                    show_viewer=show_viewer, 
                                    render_images=render_images,
-                                   render_every_n_frames=render_every_n_frames)
+                                   render_every_n_frames=render_every_n_frames,
+                                   save_images=save_images)
         
         # Initialize parent class
         super().__init__(self.handler)
@@ -230,13 +231,14 @@ class BlocksEnv(AbstractMujocoEnv):
     """Environment for block manipulation tasks"""
     
     def __init__(self, show_viewer: bool = False, render_images: bool = False,
-                 max_episode_steps: int = 1000, render_every_n_frames: int = 1):
+                 max_episode_steps: int = 1000, render_every_n_frames: int = 1, save_images: bool = True):
         super().__init__(
             mjcf_path="env/assets/stanford_tidybot/blocks_scene.xml",
             show_viewer=show_viewer,
             render_images=render_images,
             max_episode_steps=max_episode_steps,
-            render_every_n_frames=render_every_n_frames
+            render_every_n_frames=render_every_n_frames,
+            save_images=save_images
         )
 
 
@@ -244,13 +246,14 @@ class TableBlocksEnv(AbstractMujocoEnv):
     """Environment for table-based block manipulation tasks"""
     
     def __init__(self, show_viewer: bool = False, render_images: bool = False,
-                 max_episode_steps: int = 1000, render_every_n_frames: int = 1):
+                 max_episode_steps: int = 1000, render_every_n_frames: int = 1, save_images: bool = True):
         super().__init__(
             mjcf_path="env/assets/stanford_tidybot/blocks_table_scene.xml",
             show_viewer=show_viewer,
             render_images=render_images,
             max_episode_steps=max_episode_steps,
-            render_every_n_frames=render_every_n_frames
+            render_every_n_frames=render_every_n_frames,
+            save_images=save_images
         )
 
     def _setup_spaces(self):
@@ -365,13 +368,14 @@ class CabinetEnv(AbstractMujocoEnv):
     """Environment for cabinet manipulation tasks"""
     
     def __init__(self, show_viewer: bool = False, render_images: bool = False,
-                 max_episode_steps: int = 1000, render_every_n_frames: int = 1):
+                 max_episode_steps: int = 1000, render_every_n_frames: int = 1, save_images: bool = True):
         super().__init__(
             mjcf_path="env/assets/stanford_tidybot/scene.xml",
             show_viewer=show_viewer,
             render_images=render_images,
             max_episode_steps=max_episode_steps,
-            render_every_n_frames=render_every_n_frames
+            render_every_n_frames=render_every_n_frames,
+            save_images=save_images
         )
 
     def _setup_spaces(self):
@@ -448,13 +452,14 @@ class DrawerEnv(AbstractMujocoEnv):
     """Environment for drawer manipulation tasks"""
     
     def __init__(self, show_viewer: bool = False, render_images: bool = False,
-                 max_episode_steps: int = 1000, render_every_n_frames: int = 1):
+                 max_episode_steps: int = 1000, render_every_n_frames: int = 1, save_images: bool = True):
         super().__init__(
             mjcf_path="env/assets/stanford_tidybot/drawer_scene.xml",  # Assume different scene
             show_viewer=show_viewer,
             render_images=render_images,
             max_episode_steps=max_episode_steps,
-            render_every_n_frames=render_every_n_frames
+            render_every_n_frames=render_every_n_frames,
+            save_images=save_images
         )
 
     def _setup_spaces(self):
@@ -519,13 +524,14 @@ class CupboardEnv(AbstractMujocoEnv):
     """Environment for cupboard manipulation tasks with objects inside"""
     
     def __init__(self, show_viewer: bool = False, render_images: bool = False,
-                 max_episode_steps: int = 1000, render_every_n_frames: int = 1):
+                 max_episode_steps: int = 1000, render_every_n_frames: int = 1, save_images: bool = True):
         super().__init__(
             mjcf_path="env/assets/stanford_tidybot/cupboard_scene_objects_inside.xml",
             show_viewer=show_viewer,
             render_images=render_images,
             max_episode_steps=max_episode_steps,
-            render_every_n_frames=render_every_n_frames
+            render_every_n_frames=render_every_n_frames,
+            save_images=save_images
         )
 
     def _setup_spaces(self):

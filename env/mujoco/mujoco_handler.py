@@ -135,11 +135,12 @@ class MujocoHandler:
     
     def __init__(self, mjcf_path: str = "env/assets/stanford_tidybot/scene.xml", 
                  show_viewer: bool = False, render_images: bool = False,
-                 render_every_n_frames: int = 1):
+                 render_every_n_frames: int = 1, save_images: bool = True):
         self.mjcf_path = mjcf_path
         self.show_viewer = show_viewer
         self.render_images = render_images
         self.render_every_n_frames = render_every_n_frames
+        self.save_images = save_images
         
         # MuJoCo simulation
         self.model = None
@@ -177,7 +178,7 @@ class MujocoHandler:
         self.image_step_counter = 0
         self.image_save_dir = None
         self.multi_view_renderer = None
-        if self.render_images:
+        if self.render_images and self.save_images:
             self._setup_image_saving()
 
     def _setup_image_saving(self):
@@ -450,7 +451,7 @@ class MujocoHandler:
         return None
     
     def _render_and_save_images(self):
-        """Render images from multiple camera views and save them"""
+        """Render images from multiple camera views and optionally save them"""
         if not self.multi_view_renderer:
             return {}
         
@@ -468,14 +469,15 @@ class MujocoHandler:
             # Render all views
             images = self.multi_view_renderer.render_all_views()
             
-            # Save images to disk
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # milliseconds
-            
-            for view_name, image in images.items():
-                if image is not None:
-                    filename = f"{view_name}_{timestamp}_{self.image_step_counter:06d}.jpg"
-                    filepath = os.path.join(self.image_save_dir, filename)
-                    self._save_image(image, filepath)
+            # Save images to disk only if save_images is True
+            if self.save_images:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # milliseconds
+                
+                for view_name, image in images.items():
+                    if image is not None:
+                        filename = f"{view_name}_{timestamp}_{self.image_step_counter:06d}.jpg"
+                        filepath = os.path.join(self.image_save_dir, filename)
+                        self._save_image(image, filepath)
             
             return images
             

@@ -335,7 +335,8 @@ def evaluate_policy(
     show_viewer: bool = False,
     seed: int = 42,
     save_videos: bool = False,
-    video_dir: str = "evaluation_videos"
+    video_dir: str = "evaluation_videos",
+    task: str = "table_stack"
 ) -> Dict[str, Any]:
     """
     Evaluate a trained policy on multiple episodes.
@@ -352,6 +353,7 @@ def evaluate_policy(
         seed: Random seed for reproducibility
         save_videos: Whether to save evaluation videos
         video_dir: Directory to save videos
+        task: Task type ('table_stack' or 'cupboard')
         
     Returns:
         Evaluation results dictionary
@@ -376,8 +378,9 @@ def evaluate_policy(
     )
     
     # Create environment
-    logger.info("🏗️  Creating evaluation environment...")
+    logger.info(f"🏗️  Creating evaluation environment for task: {task}...")
     env = TidybotEnv(
+        task=task,
         show_viewer=show_viewer,
         render_images=render or save_videos,
         max_episode_steps=max_steps,
@@ -517,6 +520,11 @@ def main():
     parser.add_argument("--video-dir", type=str, default="evaluation_videos",
                         help="Directory to save videos")
     
+    # Task configuration
+    parser.add_argument("--task", type=str, default="table_stack",
+                        choices=["table_stack", "cupboard"],
+                        help="Task type to evaluate on")
+    
     # Output configuration
     parser.add_argument("--output-file", type=str, default="evaluation_results.json",
                         help="Output file for results")
@@ -538,7 +546,8 @@ def main():
         show_viewer=args.show_viewer,
         seed=args.seed,
         save_videos=args.save_videos,
-        video_dir=args.video_dir
+        video_dir=args.video_dir,
+        task=args.task
     )
     
     # Save results to file

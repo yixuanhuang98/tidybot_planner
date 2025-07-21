@@ -32,6 +32,7 @@ def collect_tidybot_dataset(
     video_backend: str = "pyav",
     image_writer_threads: int = 4,
     image_writer_processes: int = 0,
+    motion_planner: str = "motion_planner_table_stack",
 ):
     """
     Collect TidyBot dataset following LeRobot patterns.
@@ -48,17 +49,32 @@ def collect_tidybot_dataset(
         video_backend: Video backend for encoding
         image_writer_threads: Number of threads for image writing
         image_writer_processes: Number of processes for image writing
+        motion_planner: Motion planner to use (determines task type)
     """
+    
+    # Determine task type from motion planner
+    if 'cupboard' in motion_planner:
+        task = 'cupboard'
+        default_task_description = "Cupboard manipulation task"
+    else:
+        task = 'table_stack'
+        default_task_description = "Pick the cube with smallest x-coordinate and stack it on the cube with largest x-coordinate"
+    
+    # Use custom task description if provided, otherwise use default
+    if task_description == "Pick the cube with smallest x-coordinate and stack it on the cube with largest x-coordinate":
+        task_description = default_task_description
     
     print(f"🤖 Starting TidyBot data collection")
     print(f"📊 Target episodes: {num_episodes}")
-    print(f"🎯 Task: {task_description}")
+    print(f"🏗️  Motion planner: {motion_planner}")
+    print(f"🎯 Task: {task} - {task_description}")
     print(f"📁 Dataset ID: {repo_id}")
     
     # 1. Create environment
     print("\n🏗️  Setting up environment...")
     try:
         env = TidybotEnv(
+            task=task,
             show_viewer=show_viewer,
             render_images=True,
             max_episode_steps=max_episode_steps,
@@ -73,7 +89,7 @@ def collect_tidybot_dataset(
     
     # 2. Create policy wrapper
     print("🧠 Setting up motion planner policy...")
-    policy_wrapper = TidybotPolicyWrapper()
+    policy_wrapper = TidybotPolicyWrapper(task=task)
     
     # 3. Define dataset features following LeRobot format
     print("📋 Defining dataset features...")
@@ -275,6 +291,8 @@ def main():
                         help="Number of threads for image writing")
     parser.add_argument("--image-writer-processes", type=int, default=0,
                         help="Number of processes for image writing")
+    parser.add_argument("--motion-planner", type=str, default="motion_planner_table_stack",
+                        help="Motion planner to use (e.g., motion_planner_table_stack, motion_planner_cupboard)")
     
     args = parser.parse_args()
     
@@ -291,6 +309,7 @@ def main():
         video_backend=args.video_backend,
         image_writer_threads=args.image_writer_threads,
         image_writer_processes=args.image_writer_processes,
+        motion_planner=args.motion_planner,
     )
     
     print(f"✅ Data collection completed successfully!")

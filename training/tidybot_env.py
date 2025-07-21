@@ -1,8 +1,9 @@
 """
-Gymnasium wrapper for TidyBot table stacking environment.
+Gymnasium wrapper for TidyBot environments.
 
-This wrapper makes the existing MuJoCo environment compatible with LeRobot's
-data collection and training pipeline.
+This wrapper makes the existing MuJoCo environments compatible with LeRobot's
+data collection and training pipeline. Supports multiple tasks including
+table stacking and cupboard tasks.
 """
 
 import gymnasium as gym
@@ -16,22 +17,25 @@ import os
 # Add parent directory to path to import existing modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from env.mujoco.mujoco_env import TableBlocksEnv
+from env.mujoco.mujoco_env import TableBlocksEnv, CupboardEnv
 from agent.motion_planner_table_stack_policy import MotionPlannerTableStackPolicy
+from agent.mp_policy import MotionPlannerPolicy_New
 
 
 class TidybotEnv(gym.Env):
     """
-    Gymnasium wrapper for TidyBot table stacking environment.
+    Gymnasium wrapper for TidyBot environments.
     
-    This environment wraps the existing TableBlocksEnv to be compatible with
+    This environment wraps the existing environments to be compatible with
     LeRobot's data collection and training pipeline.
     
-    Task: Pick the cube with smallest x-coordinate and stack it on the cube
-    with largest x-coordinate.
+    Supports multiple tasks:
+    - table_stack: Pick the cube with smallest x-coordinate and stack it on the cube with largest x-coordinate
+    - cupboard: Cupboard-related manipulation tasks
     """
     
     def __init__(self, 
+                 task: str = 'table_stack',
                  show_viewer: bool = False,
                  render_images: bool = True,
                  max_episode_steps: int = 1000,
@@ -41,21 +45,34 @@ class TidybotEnv(gym.Env):
         Initialize the TidyBot environment.
         
         Args:
+            task: Task type ('table_stack' or 'cupboard')
             show_viewer: Whether to show the MuJoCo viewer
             render_images: Whether to render images from cameras
             max_episode_steps: Maximum steps per episode
             render_every_n_frames: Render frequency
         """
         super().__init__()
+        self.task = task
         
-        # Initialize the underlying TableBlocksEnv
-        # The handler will be launched automatically in BaseEnv.__init__
-        self.env = TableBlocksEnv(
-            show_viewer=show_viewer,
-            render_images=render_images,
-            max_episode_steps=max_episode_steps,
-            render_every_n_frames=render_every_n_frames
-        )
+        # Initialize the appropriate environment based on task
+        if task == 'table_stack':
+            self.env = TableBlocksEnv(
+                show_viewer=show_viewer,
+                render_images=render_images,
+                max_episode_steps=max_episode_steps,
+                render_every_n_frames=render_every_n_frames,
+                save_images=True  # Don't save images to disk for data collection
+            )
+        elif task == 'cupboard':
+            self.env = CupboardEnv(
+                show_viewer=show_viewer,
+                render_images=render_images,
+                max_episode_steps=max_episode_steps,
+                render_every_n_frames=render_every_n_frames,
+                save_images=True  # Don't save images to disk for data collection
+            )
+        else:
+            raise ValueError(f"Unknown task: {task}. Supported tasks: 'table_stack', 'cupboard'")
         
         # Define action space (11D: base_pose + arm_pos + arm_quat + gripper)
         self.action_space = spaces.Box(
@@ -245,9 +262,21 @@ class TidybotPolicyWrapper:
     Wrapper for the motion planner policy to work with the gym environment.
     """
     
-    def __init__(self):
-        """Initialize the policy wrapper."""
-        self.policy = MotionPlannerTableStackPolicy()
+    def __init__(self, task: str = 'table_stack'):
+        """Initialize the policy wrapper.
+        
+        Args:
+            task: Task type ('table_stack' or 'cupboard')
+        """
+        self.task = task
+        
+        if task == 'table_stack':
+            self.policy = MotionPlannerTableStackPolicy()
+        elif task == 'cupboard':
+            self.policy = MotionPlannerPolicy_New(cupboard_mode=True, custom_grasp=True)
+            self.policy.target_location = np.array([0.8, 0, 0.5])
+        else:
+            raise ValueError(f"Unknown task: {task}. Supported tasks: 'table_stack', 'cupboard'")
     
     @property
     def episode_ended(self):
