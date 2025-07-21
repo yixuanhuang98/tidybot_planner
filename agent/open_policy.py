@@ -304,7 +304,7 @@ class MotionPlannerPolicyCabinetMP(BaseAgent):
                             else:
                                 print(f"Grasp timeout reached, proceeding with current grip: {gripper_pos[0]:.3f}")
                             
-                            self.grasp_state = PickState.LIFT
+                            self.grasp_state = PickState.BACK
                             # Clean up tracking variables
                             delattr(self, 'grasp_start_time')
                             delattr(self, 'initial_gripper_pos')
