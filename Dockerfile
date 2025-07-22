@@ -1,3 +1,6 @@
+# docker build -t tidybot-lerobot .
+# docker run -ti --gpus all -v $(pwd):/app -p 8000:8000 tidybot-lerobot bash -c "python3 ./training/example_usage.py --task cupboard"
+
 # Use NVIDIA PyTorch base image with CUDA support
 FROM nvcr.io/nvidia/pytorch:24.10-py3
 
