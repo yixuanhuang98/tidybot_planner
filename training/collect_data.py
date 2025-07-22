@@ -158,81 +158,73 @@ def collect_tidybot_dataset(
         total_attempts += 1
         print(f"\n📹 Recording episode {successful_episodes + 1}/{num_episodes} (attempt {total_attempts})")
         
-        try:
-            # Reset environment and policy
-            obs, info = env.reset()
-            policy_wrapper.reset()
+        # Reset environment and policy
+        obs, info = env.reset()
+        policy_wrapper.reset()
+        
+        episode_start_time = time.time()
+        episode_step = 0
+        episode_reward = 0
+        episode_success = False
+        
+        # Episode loop
+        while True:
+            loop_start_time = time.time()
             
-            episode_start_time = time.time()
-            episode_step = 0
-            episode_reward = 0
-            episode_success = False
+            # Get action from policy
+            action = policy_wrapper.select_action(obs)
             
-            # Episode loop
-            while True:
-                loop_start_time = time.time()
-                
-                # Get action from policy
-                action = policy_wrapper.select_action(obs)
-                
-                # Check if policy has finished
-                if policy_wrapper.episode_ended:
-                    print(f"   📋 Policy completed execution at step {episode_step}")
-                    break
-                
-                # Step environment
-                next_obs, reward, terminated, truncated, info = env.step(action)
-                
-                # Track episode statistics
-                episode_step += 1
-                episode_reward += reward
-                episode_success = info.get('success', False)
-                
-                # Create frame for dataset
-                frame = {
-                    **obs,  # observation.state, observation.images.*
-                    "action": action.astype(np.float32),
-                    "next.reward": np.array([reward], dtype=np.float32),
-                    "next.done": np.array([terminated or truncated], dtype=bool),
-                }
-                
-                # Add frame to dataset
-                dataset.add_frame(frame, task=task_description)
-                
-                # Update observation
-                obs = next_obs
-                
-                # Check termination conditions
-                if terminated or truncated:
-                    print(f"   🏁 Episode terminated: terminated={terminated}, truncated={truncated}")
-                    break
-                
-                # Maintain consistent timing
-                if fps > 0:
-                    dt_s = time.time() - loop_start_time
-                    sleep_time = max(0, 1.0/fps - dt_s)
-                    if sleep_time > 0:
-                        time.sleep(sleep_time)
+            # Check if policy has finished
+            if policy_wrapper.episode_ended:
+                print(f"   📋 Policy completed execution at step {episode_step}")
+                break
             
-            # Episode statistics
-            episode_duration = time.time() - episode_start_time
-            print(f"   📊 Episode stats: {episode_step} steps, {episode_reward:.2f} reward, {episode_duration:.2f}s")
-            print(f"   {'✅ SUCCESS' if episode_success else '❌ FAILED'}")
+            # Step environment
+            next_obs, reward, terminated, truncated, info = env.step(action)
             
-            # Save episode regardless of success (for learning from failures too)
-            dataset.save_episode()
-            successful_episodes += 1
+            # Track episode statistics
+            episode_step += 1
+            episode_reward += reward
+            episode_success = info.get('success', False)
             
-            print(f"   💾 Episode {successful_episodes} saved")
+            # Create frame for dataset
+            frame = {
+                **obs,  # observation.state, observation.images.*
+                "action": action.astype(np.float32),
+                "next.reward": np.array([reward], dtype=np.float32),
+                "next.done": np.array([terminated or truncated], dtype=bool),
+            }
             
-        except Exception as e:
-            print(f"   ❌ Error during episode collection: {e}")
-            print(f"   🔄 Clearing episode buffer and continuing...")
-            try:
-                dataset.clear_episode_buffer()
-            except:
-                pass
-            continue
+            # Add frame to dataset
+            dataset.add_frame(frame, task=task_description)
+            
+            # Update observation
+            obs = next_obs
+            
+            # Check termination conditions
+            if terminated or truncated:
+                print(f"   🏁 Episode terminated: terminated={terminated}, truncated={truncated}")
+                break
+            
+            # Maintain consistent timing
+            if fps > 0:
+                dt_s = time.time() - loop_start_time
+                sleep_time = max(0, 1.0/fps - dt_s)
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+        
+        # Episode statistics
+        episode_duration = time.time() - episode_start_time
+        print(f"   📊 Episode stats: {episode_step} steps, {episode_reward:.2f} reward, {episode_duration:.2f}s")
+        print(f"   {'✅ SUCCESS' if episode_success else '❌ FAILED'}")
+        
+        # Save episode regardless of success (for learning from failures too)
+        dataset.save_episode()
+        successful_episodes += 1
+        
+        print(f"   💾 Episode {successful_episodes} saved")
+        
+        
     
     # 6. Finalize dataset
     print(f"\n🎉 Data collection complete! Collected {successful_episodes} episodes in {total_attempts} attempts")
