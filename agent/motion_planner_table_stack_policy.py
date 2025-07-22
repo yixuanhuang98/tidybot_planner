@@ -48,7 +48,7 @@ class MotionPlannerTableStackPolicy(BaseAgent):
     GRASP_TIMEOUT_S = 3.0
     PLACE_SUCCESS_THRESHOLD = 0.05
     GRASP_FAILURE_THRESHOLD = 0.95  # Gripper position above which grasp is considered failed after lift
-    MAX_GRASP_RETRIES = 3
+    MAX_GRASP_RETRIES = 1
 
     def __init__(self):
         # Motion planning state - following controller.py pattern
