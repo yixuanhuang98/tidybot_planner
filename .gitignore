@@ -6,4 +6,5 @@ __pycache__
 data/
 .gitignore
 simulation_images/
+overview_images/
 MUJOCO_LOG.TXT

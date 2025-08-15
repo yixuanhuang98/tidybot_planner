@@ -20,6 +20,7 @@ import numpy as np
 from ruckig import InputParameter, OutputParameter, Result, Ruckig
 from constants import POLICY_CONTROL_PERIOD
 from ik_solver import IKSolver
+import os
 
 class ShmState:
     def __init__(self, existing_instance=None, num_objects=3, object_names=None):
@@ -396,7 +397,7 @@ class MujocoSim:
                 mujoco.mj_step(self.model, self.data)
 
 class MujocoEnv:
-    def __init__(self, render_images=True, show_viewer=True, show_images=False, table_scene=False, drawer_scene=False, cupboard_scene=False, cabinet_scene=False, custom_grasp=False):
+    def __init__(self, render_images=True, show_viewer=True, show_images=True, table_scene=False, drawer_scene=False, cupboard_scene=False, cabinet_scene=False, custom_grasp=False):
         if drawer_scene:
             self.mjcf_path = 'models/stanford_tidybot/drawer_scene.xml'
         elif table_scene:
@@ -421,6 +422,13 @@ class MujocoEnv:
         self.cupboard_scene = cupboard_scene
         self.cabinet_scene = cabinet_scene
         self.custom_grasp = custom_grasp
+
+        # When running the cupboard_scene, enable saving of the 'overview' camera frames
+        self.save_overview_images = self.cupboard_scene
+        self.overview_image_dir = 'overview_images'
+        self._overview_frame_idx = 0
+        if self.save_overview_images:
+            os.makedirs(self.overview_image_dir, exist_ok=True)
 
         # Detect objects from the model to determine shared memory size
         model = mujoco.MjModel.from_xml_path(self.mjcf_path)
@@ -472,6 +480,12 @@ class MujocoEnv:
             start_time = time.time()
             for renderer in renderers:
                 renderer.render()
+                # Save overview camera frames when in cupboard_scene
+                if self.cupboard_scene and getattr(renderer.shm_image, 'camera_name', None) == 'overview':
+                    img_bgr = cv.cvtColor(renderer.shm_image.data, cv.COLOR_RGB2BGR)
+                    filename = os.path.join(self.overview_image_dir, f"overview_{self._overview_frame_idx:06d}.png")
+                    cv.imwrite(filename, img_bgr)
+                    self._overview_frame_idx += 1
             render_time = time.time() - start_time
             if render_time > 0.1:  # 10 fps
                 print(f'Warning: Offscreen rendering took {1000 * render_time:.1f} ms, try making the Mujoco viewer window smaller to speed up offscreen rendering')
