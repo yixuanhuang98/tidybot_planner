@@ -96,7 +96,6 @@ def annotate_image(image_path: Path, u: float, v: float, output_path: Path, radi
 		# Draw if inside image bounds
 		if 0 <= u_int < w and 0 <= v_int < h:
 			cv.circle(img, (u_int, v_int), radius, (0, 0, 255), thickness=-1)
-			cv.putText(img, f"({u_int}, {v_int})", (u_int + 8, v_int - 8), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 		else:
 			cv.putText(img, f"point outside image: ({u_int}, {v_int})", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
@@ -106,7 +105,7 @@ def annotate_image(image_path: Path, u: float, v: float, output_path: Path, radi
 
 def main() -> None:
 	parser = argparse.ArgumentParser(description="Project a world 3D point onto the overview camera and annotate the image.")
-	parser.add_argument("--point", nargs=3, type=float, default=(1.0, 0.7, 0.33), help="World point XYZ to project (default: 1.0 -0.6 0.2)")
+	parser.add_argument("--point", nargs=3, type=float, default=(1.0, 0.7, 0.2), help="World point XYZ to project (default: 1.0 -0.6 0.2)")
 	parser.add_argument("--image", type=str, default=str(Path("overview_images") / "overview_000000.png"), help="Path to overview image to annotate")
 	parser.add_argument("--model", type=str, default=str(Path("models") / "stanford_tidybot" / "cupboard_scene.xml"), help="Path to the cupboard_scene.xml model")
 	parser.add_argument("--camera", type=str, default="overview", help="Camera name in the XML (default: overview)")
