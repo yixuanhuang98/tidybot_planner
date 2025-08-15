@@ -90,72 +90,30 @@ def load_overview_camera_from_xml(xml_path: Path, camera_name: str = "overview")
 	return (pos, euler, fovy, width, height)
 
 
-def annotate_coordinate_system(image_path: Path, origin_world: np.ndarray, axis_length: float, 
-                              cam_pos: Tuple[float, float, float], cam_euler: Tuple[float, float, float],
-                              fx: float, fy: float, cx: float, cy: float, output_path: Path) -> None:
+def annotate_image(image_path: Path, u: float, v: float, output_path: Path, radius: int = 5) -> None:
 	img = cv.imread(str(image_path), cv.IMREAD_COLOR)
 	if img is None:
 		raise RuntimeError(f"Failed to read image: {image_path}")
 
 	h, w = img.shape[:2]
-	
-	# Define coordinate system points
-	points_world = {
-		'origin': origin_world,
-		'x_axis': origin_world + np.array([axis_length, 0, 0]),
-		'y_axis': origin_world + np.array([0, axis_length, 0]), 
-		'z_axis': origin_world + np.array([0, 0, axis_length])
-	}
-	
-	# Colors for each axis: origin=white, x=red, y=green, z=blue
-	colors = {
-		'origin': (255, 255, 255),
-		'x_axis': (0, 0, 255),
-		'y_axis': (0, 255, 0),
-		'z_axis': (255, 0, 0)
-	}
-	
-	# Project all points
-	projected_points = {}
-	for name, point_world in points_world.items():
-		p_cam = world_to_camera(point_world, cam_pos, cam_euler)
-		u, v, depth = project_to_pixel(p_cam, fx, fy, cx, cy)
-		
-		if np.isfinite(u) and np.isfinite(v) and depth > 0:
-			u_int, v_int = int(round(u)), int(round(v))
-			if 0 <= u_int < w and 0 <= v_int < h:
-				projected_points[name] = (u_int, v_int)
-				# Draw point
-				cv.circle(img, (u_int, v_int), 6, colors[name], thickness=-1)
-				# Add labels
-				if name == 'origin':
-					# Positioned below and to the left of the origin point
-					cv.putText(img, "(0,0,0)", (u_int - 40, v_int + 15), cv.FONT_HERSHEY_SIMPLEX, 0.4, colors[name], 2)
-				else:
-					label = f"+{name.split('_')[0].upper()}"
-					# Smaller font size
-					cv.putText(img, label, (u_int + 8, v_int - 8), cv.FONT_HERSHEY_SIMPLEX, 0.4, colors[name], 2)
-			else:
-				print(f"{name} point outside image bounds: ({u_int}, {v_int})")
+	if not (np.isfinite(u) and np.isfinite(v)):
+		print("Projected point behind camera or invalid; annotating with text only.")
+		cv.putText(img, "point invalid (behind camera)", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+	else:
+		u_int, v_int = int(round(u)), int(round(v))
+		# Draw if inside image bounds
+		if 0 <= u_int < w and 0 <= v_int < h:
+			cv.circle(img, (u_int, v_int), radius, (0, 0, 255), thickness=-1)
 		else:
-			print(f"{name} point behind camera or invalid projection")
-	
-	# Draw lines from origin to axes if both points are visible
-	if 'origin' in projected_points:
-		origin_px = projected_points['origin']
-		for axis_name in ['x_axis', 'y_axis', 'z_axis']:
-			if axis_name in projected_points:
-				axis_px = projected_points[axis_name]
-				cv.line(img, origin_px, axis_px, colors[axis_name], thickness=2)
+			cv.putText(img, f"point outside image: ({u_int}, {v_int})", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
 	cv.imwrite(str(output_path), img)
-	print(f"Coordinate system annotated image written to: {output_path}")
+	print(f"Annotated image written to: {output_path}")
 
 
 def main() -> None:
-	parser = argparse.ArgumentParser(description="Project a world coordinate system onto the overview camera and annotate the image.")
-	parser.add_argument("--origin", nargs=3, type=float, default=(0.8, -0.15, 0.2), help="Origin point XYZ for coordinate system (default: 1.0 0.7 0.2)")
-	parser.add_argument("--axis-length", type=float, default=0.2, help="Length of coordinate axes in world units (default: 0.2)")
+	parser = argparse.ArgumentParser(description="Project a world 3D point onto the overview camera and annotate the image.")
+	parser.add_argument("--point", nargs=3, type=float, default=(1.0, -0.4, 0.33), help="World point XYZ to project (default: 1.0 -0.6 0.2)")
 	parser.add_argument("--image", type=str, default=str(Path("overview_images") / "overview_000000.png"), help="Path to overview image to annotate")
 	parser.add_argument("--model", type=str, default=str(Path("models") / "stanford_tidybot" / "cupboard_scene.xml"), help="Path to the cupboard_scene.xml model")
 	parser.add_argument("--camera", type=str, default="overview", help="Camera name in the XML (default: overview)")
@@ -179,13 +137,16 @@ def main() -> None:
 	print(f"Camera pos: {cam_pos}, euler(xyz rad): {cam_euler}, fovy: {fovy_deg}, res: {width}x{height}")
 	print(f"K =\n{K}")
 
-	# Define coordinate system origin
-	origin_world = np.array(args.origin, dtype=float)
-	print(f"Coordinate system origin: {origin_world}")
-	print(f"Axis length: {args.axis_length}")
+	# Project world point
+	point_world = np.array(args.point, dtype=float)
+	p_cam = world_to_camera(point_world, cam_pos, cam_euler)
+	u, v, depth = project_to_pixel(p_cam, fx, fy, cx, cy)
+	print(f"World point: {point_world}")
+	print(f"Camera coords: {p_cam}, depth (forward) = {depth}")
+	print(f"Pixel: (u, v) = ({u}, {v})")
 
-	# Annotate image with coordinate system
-	annotate_coordinate_system(image_path, origin_world, args.axis_length, cam_pos, cam_euler, fx, fy, cx, cy, output_path)
+	# Annotate image
+	annotate_image(image_path, u, v, output_path)
 
 
 if __name__ == "__main__":

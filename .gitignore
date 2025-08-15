@@ -7,4 +7,5 @@ data/
 .gitignore
 simulation_images/
 overview_images/
+VLM/runs/
 MUJOCO_LOG.TXT

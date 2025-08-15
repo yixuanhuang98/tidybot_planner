@@ -2,177 +2,208 @@ import openai
 import base64
 import time
 import json
+import argparse
+from datetime import datetime
+from pathlib import Path
 
 # === CONFIGURATION ===
-IMAGE_PATH = "images/8objs_small_2.png"
-API_KEY = "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"  # Replace with your key
+IMAGE_PATH = "images/overview_000000_annotated.png"
 MODEL_NAME = "chatgpt-4o-latest"
 TEMPERATURE = 0.1
 TOP_P = 0.7
 MAX_TOKENS = 4096 * 3
 
-# === INITIALIZE CLIENT ===
-client = openai.OpenAI(api_key=API_KEY)
+def main(api_key: str, num_runs: int):
+    """
+    Main function to run the VLM pipeline for cup placement.
+    """
+    # === CREATE TIMESTAMPED OUTPUT DIRECTORY ===
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    output_dir = Path("runs") / timestamp
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Saving results to: {output_dir}")
 
-# === LOAD IMAGE ===
-with open(IMAGE_PATH, "rb") as f:
-    image_base64 = base64.b64encode(f.read()).decode("utf-8")
+    # === INITIALIZE CLIENT ===
+    client = openai.OpenAI(api_key=api_key)
 
-# === HELPER FUNCTION ===
-def send_prompt(full_prompt, step_id):
-    print(f"\n===== STEP {step_id} =====")
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": full_prompt},
-                    {"type": "image_url", "image_url": {
-                        "url": f"data:image/png;base64,{image_base64}"
-                    }},
+    # === LOAD IMAGE ===
+    with open(IMAGE_PATH, "rb") as f:
+        image_base64 = base64.b64encode(f.read()).decode("utf-8")
+
+    all_runs_data = []
+
+    for run_idx in range(num_runs):
+        print(f"\n\n{'='*20} RUN {run_idx + 1}/{num_runs} {'='*20}\n")
+
+        # === HELPER FUNCTION ===
+        def send_prompt(full_prompt, step_id):
+            print(f"\n===== STEP {step_id} =====")
+            response = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": full_prompt},
+                            {"type": "image_url", "image_url": {
+                                "url": f"data:image/png;base64,{image_base64}"
+                            }},
+                        ],
+                    }
                 ],
-            }
-        ],
-        temperature=TEMPERATURE,
-        top_p=TOP_P,
-        max_tokens=MAX_TOKENS,
-    )
-    result = response.choices[0].message.content
-    print(result)
-    return result
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+                max_tokens=MAX_TOKENS,
+            )
+            result = response.choices[0].message.content
+            print(result)
+            return result
 
-# === CONVERSATION HISTORY ===
-history = []
+        # === CONVERSATION HISTORY ===
+        history = []
 
-def append_and_send(new_query, step_id):
-    # Combine full conversation history so far
-    full_prompt = ""
-    for i, (q, r) in enumerate(history):
-        full_prompt += f"\n### Step {i+1}: {q.strip()}\n\nResponse:\n{r.strip()}\n"
-    full_prompt += f"\n### Step {step_id}: {new_query.strip()}\n"
-    
-    response = send_prompt(full_prompt, step_id)
-    history.append((new_query, response))
-    time.sleep(1)
-    return response
+        def append_and_send(new_query, step_id):
+            # Combine full conversation history so far
+            full_prompt = ""
+            for i, (q, r) in enumerate(history):
+                full_prompt += f"\n### Step {i+1}: {q.strip()}\n\nResponse:\n{r.strip()}\n"
+            full_prompt += f"\n### Step {step_id}: {new_query.strip()}\n"
+            
+            response = send_prompt(full_prompt, step_id)
+            history.append((new_query, response))
+            time.sleep(1)
+            return response
 
-# === STEP 1: Extract scene constraints ===
-query_1 = """
-Given the image, identify the coordinate system origin and the 3D bounding box of the shelf. 
-The shelf has the following dimensions:
+        # === STEP 1: Extract scene constraints ===
+        query_1 = """
+        Given the image, identify the coordinate system origin and the 3D bounding box of the shelf. 
+        The shelf has the following dimensions:
 
-Depth (x): 0.35 m
+        Depth (x): 0.35 m
+        Width (y): 0.3 m
+        Height (z): 0.4 m
 
-Width (y): 0.3 m
+        The object to place is a cup with dimensions (0.06, 0.14, 0.2) meters. 
+        The 0.2 m side aligns with the +z axis (upright orientation).
+        You will output the center of these objects. 
 
-Height (z): 0.4 m
+        Constraints: 
+        - No cup-cup collision (add a small safety gap if needed and ensure the new cups are not colliding with any existing cups)
+        - No cupboard-cup collision (e.g., the cup should not collide with any sides of the cupboard)
 
-The object to place is a cup with dimensions (0.06, 0.14, 0.2) meters. 
-The 0.2 m side aligns with the +z axis (upright orientation).
-You will output the center of these objects. 
+        Please confirm:
+        - Origin of the coordinate system (position and orientation)
+        - Direction of +x, +y, and +z
+        - Shelf position and size in the coordinate system 
+        - The coordinates of the 8 corners of the cupboard 
+        - where should I start placing cups to avoid collisions with the robot?
 
-Constraints: 
-- No cup-cup collision (add a small safety gap if needed and ensure the new cups are not colliding with any existing cups)
-- No cupboard-cup collision (e.g., the cup should not collide with any sides of the cupboard)
+        """
+        response_1 = append_and_send(query_1, step_id=1)
 
-Please confirm:
-- Origin of the coordinate system (position and orientation)
-- Direction of +x, +y, and +z
-- Shelf position and size in the coordinate system 
-- The coordinates of the 8 corners of the cupboard 
-- where should I start placing cups to avoid collisions with the robot?
+        # === STEP 2: Confirm cup dimensions ===
+        query_2 = """
 
-"""
-response_1 = append_and_send(query_1, step_id=1)
+        Task:
+        Please compute the 3D placement coordinates for 8 cups placed sequentially inside the shelf (from cup 1 to cup 8).
 
-# === STEP 2: Confirm cup dimensions ===
-query_2 = """
+        Please assume the cups are placed on the bottom shelf but please ensure they are not collision with the bottom shelf. 
 
-Task:
-Please compute the 3D placement coordinates for 8 cups placed sequentially inside the shelf (from cup 1 to cup 8).
+        Please first calculate how many rows and colums are needed and then calculate the placement parameters. 
 
-Please assume the cups are placed on the bottom shelf but please ensure they are not collision with the bottom shelf. \n 
+        For the output, could you return me a list of placement parameters for all cupds in JSON format. 
 
-Please first calculate how many rows and colums are needed and then calculate the placement parameters. \n
+        Please ensure:
+        - No cup-cup collision (add a small safety gap if needed and ensure the new cups are not colliding with any existing cups)
+        - No cupboard-cup collision (e.g., the cup should not collide with any sides of the cupboard)
+        """
+        response_2 = append_and_send(query_2, step_id=2)
 
-For the output, could you return me a list of placement parameters for all cupds in JSON format. \n
+        # === STEP 3: Safety check ===
+        query_3 = f"""
+        Please validate the placement result from Step 2.
 
-Please ensure:
-- No cup-cup collision (add a small safety gap if needed and ensure the new cups are not colliding with any existing cups)
-- No cupboard-cup collision (e.g., the cup should not collide with any sides of the cupboard)
-"""
-response_2 = append_and_send(query_2, step_id=2)
+        Check for every:
+        - No cup-cup collisions 
+        - No cupboard-cup collision 
 
-# === STEP 3: Safety check ===
-query_3 = f"""
-Please validate the placement result from Step 2.
+        Does it follow the how you should first place the cups? 
 
-Check for every:
-- No cup-cup collisions 
-- No cupboard-cup collision 
+        If any placements are unsafe, return corrected placements. Otherwise, confirm all is valid.
+        """
+        response_3 = append_and_send(query_3, step_id=3)
 
-Does it follow the how you should first place the cups? 
+        # === STEP 4: Ensure structured JSON output ===
+        query_4 = f"""
+        Please return the final validated cup placements from Step 3 as a structured list of JSON objects, 
+        where each object corresponds to one cup with the following schema:
 
-If any placements are unsafe, return corrected placements. Otherwise, confirm all is valid.
-"""
-response_3 = append_and_send(query_3, step_id=3)
+        {{
+            "cup_id": int,               // Cup number from 1 to 8
+            "position": {{
+                "x": float,              // Depth (meters)
+                "y": float,              // Width (meters)
+                "z": float               // Height (meters)
+            }}
+        }}
 
-# === STEP 4: Ensure structured JSON output ===
-query_4 = f"""
-Please return the final validated cup placements from Step 3 as a structured list of JSON objects, 
-where each object corresponds to one cup with the following schema:
+        Ensure the output is a pure JSON list (no markdown, no extra text, no code formatting), like:
 
-{{
-    "cup_id": int,               // Cup number from 1 to 8
-    "position": {{
-        "x": float,              // Depth (meters)
-        "y": float,              // Width (meters)
-        "z": float               // Height (meters)
-    }}
-}}
+        [
+            {{
+                "cup_id": 1,
+                "position": {{"x": 0.35, "y": 0.05, "z": 0.0}}
+            }},
+            ...
+        ]
 
-Ensure the output is a pure JSON list (no markdown, no extra text, no code formatting), like:
+        Only return the JSON list.
+        """
+        response_4 = append_and_send(query_4, step_id=4)
 
-[
-    {{
-        "cup_id": 1,
-        "position": {{"x": 0.35, "y": 0.05, "z": 0.0}}
-    }},
-    ...
-]
+        # === SAVE JSON OUTPUT ===
+        try:
+            # Extract JSON from the response (remove any markdown formatting)
+            json_text = response_4.strip()
+            if json_text.startswith('```json'):
+                json_text = json_text[7:]
+            if json_text.endswith('```'):
+                json_text = json_text[:-3]
+            json_text = json_text.strip()
+            
+            # Parse and validate JSON
+            vlm_data = json.loads(json_text)
+            all_runs_data.append(vlm_data)
+            
+            # Save to file
+            output_file = output_dir / f"vlm_target_locations_run_{run_idx + 1}.json"
+            with open(output_file, 'w') as f:
+                json.dump(vlm_data, f, indent=2)
+            
+            print(f"\n===== VLM OUTPUT FOR RUN {run_idx + 1} SAVED =====")
+            print(f"Target locations saved to: {output_file}")
+            print(f"Number of cups: {len(vlm_data)}")
+            print("JSON content:")
+            print(json.dumps(vlm_data, indent=2))
+            
+        except json.JSONDecodeError as e:
+            print(f"Error parsing JSON from VLM response on run {run_idx + 1}: {e}")
+            print("Raw response:")
+            print(response_4)
+        except Exception as e:
+            print(f"Error saving VLM output on run {run_idx + 1}: {e}")
 
-Only return the JSON list.
-"""
-response_4 = append_and_send(query_4, step_id=4)
+    if all_runs_data:
+        aggregated_output_file = output_dir / "vlm_target_locations_all_runs.json"
+        with open(aggregated_output_file, 'w') as f:
+            json.dump(all_runs_data, f, indent=2)
+        print(f"\n\n{'='*20} ALL RUNS COMPLETED {'='*20}")
+        print(f"Aggregated results saved to: {aggregated_output_file}")
 
-# === SAVE JSON OUTPUT ===
-try:
-    # Extract JSON from the response (remove any markdown formatting)
-    json_text = response_4.strip()
-    if json_text.startswith('```json'):
-        json_text = json_text[7:]
-    if json_text.endswith('```'):
-        json_text = json_text[:-3]
-    json_text = json_text.strip()
-    
-    # Parse and validate JSON
-    vlm_data = json.loads(json_text)
-    
-    # Save to file
-    output_file = "vlm_target_locations.json"
-    with open(output_file, 'w') as f:
-        json.dump(vlm_data, f, indent=2)
-    
-    print(f"\n===== VLM OUTPUT SAVED =====")
-    print(f"Target locations saved to: {output_file}")
-    print(f"Number of cups: {len(vlm_data)}")
-    print("JSON content:")
-    print(json.dumps(vlm_data, indent=2))
-    
-except json.JSONDecodeError as e:
-    print(f"Error parsing JSON from VLM response: {e}")
-    print("Raw response:")
-    print(response_4)
-except Exception as e:
-    print(f"Error saving VLM output: {e}")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run VLM-based cup placement task.")
+    parser.add_argument("--api_key", type=str, required=True, help="OpenAI API key.")
+    parser.add_argument("-n", "--num_runs", type=int, default=1, help="Number of times to run the VLM pipeline.")
+    args = parser.parse_args()
+    main(args.api_key, args.num_runs)
