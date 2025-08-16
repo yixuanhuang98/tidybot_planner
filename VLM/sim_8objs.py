@@ -7,21 +7,26 @@ from datetime import datetime
 from pathlib import Path
 
 # === CONFIGURATION ===
-IMAGE_PATH = "images/overview_000000_annotated.png"
-MODEL_NAME = "chatgpt-4o-latest"
+# IMAGE_PATH = "images/overview_000000_annotated.png"
+IMAGE_PATH = "images/8objs_small_2.png"
 TEMPERATURE = 0.1
 TOP_P = 0.7
 MAX_TOKENS = 4096 * 3
 
-def main(api_key: str, num_runs: int):
+
+def main(api_key: str, num_runs: int, model_name: str, save_runs: bool):
     """
     Main function to run the VLM pipeline for cup placement.
     """
-    # === CREATE TIMESTAMPED OUTPUT DIRECTORY ===
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    output_dir = Path("runs") / timestamp
-    output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Saving results to: {output_dir}")
+    # === CREATE TIMESTAMPED OUTPUT DIRECTORY (optional) ===
+    output_dir: Path | None = None
+    if save_runs:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        output_dir = Path("runs") / timestamp
+        output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Saving results to: {output_dir}")
+    else:
+        print("Running without saving outputs (use --save_runs to enable saving).")
 
     # === INITIALIZE CLIENT ===
     client = openai.OpenAI(api_key=api_key)
@@ -38,23 +43,40 @@ def main(api_key: str, num_runs: int):
         # === HELPER FUNCTION ===
         def send_prompt(full_prompt, step_id):
             print(f"\n===== STEP {step_id} =====")
-            response = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": full_prompt},
-                            {"type": "image_url", "image_url": {
-                                "url": f"data:image/png;base64,{image_base64}"
-                            }},
-                        ],
-                    }
-                ],
-                temperature=TEMPERATURE,
-                top_p=TOP_P,
-                max_tokens=MAX_TOKENS,
-            )
+            if "gpt-5" or "o3" in model_name:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": full_prompt},
+                                {"type": "image_url", "image_url": {
+                                    "url": f"data:image/png;base64,{image_base64}"
+                                }},
+                            ],
+                        }
+                    ],
+                    max_completion_tokens=MAX_TOKENS,
+                )
+            else:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": full_prompt},
+                                {"type": "image_url", "image_url": {
+                                    "url": f"data:image/png;base64,{image_base64}"
+                                }},
+                            ],
+                        }
+                    ],
+                    temperature=TEMPERATURE,
+                    top_p=TOP_P,
+                    max_tokens=MAX_TOKENS,
+                )
             result = response.choices[0].message.content
             print(result)
             return result
@@ -87,16 +109,16 @@ def main(api_key: str, num_runs: int):
         The 0.2 m side aligns with the +z axis (upright orientation).
         You will output the center of these objects. 
 
-        Constraints: 
-        - No cup-cup collision (add a small safety gap if needed and ensure the new cups are not colliding with any existing cups)
-        - No cupboard-cup collision (e.g., the cup should not collide with any sides of the cupboard)
-
         Please confirm:
         - Origin of the coordinate system (position and orientation)
         - Direction of +x, +y, and +z
         - Shelf position and size in the coordinate system 
         - The coordinates of the 8 corners of the cupboard 
-        - where should I start placing cups to avoid collisions with the robot?
+        - where should I start placing cups to satisfy the constraints?
+
+        Constraints: 
+        - No cupboard-cup collision (e.g., the cup should not collide with any sides of the cupboard)
+        - No cup-cup collision (please ensure the new cups are not colliding with any existing cups)
 
         """
         response_1 = append_and_send(query_1, step_id=1)
@@ -139,11 +161,11 @@ def main(api_key: str, num_runs: int):
         where each object corresponds to one cup with the following schema:
 
         {{
-            "cup_id": int,               // Cup number from 1 to 8
+            "cup_id": 1,
             "position": {{
-                "x": float,              // Depth (meters)
-                "y": float,              // Width (meters)
-                "z": float               // Height (meters)
+                "x": float,
+                "y": float,
+                "z": float
             }}
         }}
 
@@ -175,13 +197,16 @@ def main(api_key: str, num_runs: int):
             vlm_data = json.loads(json_text)
             all_runs_data.append(vlm_data)
             
-            # Save to file
-            output_file = output_dir / f"vlm_target_locations_run_{run_idx + 1}.json"
-            with open(output_file, 'w') as f:
-                json.dump(vlm_data, f, indent=2)
-            
-            print(f"\n===== VLM OUTPUT FOR RUN {run_idx + 1} SAVED =====")
-            print(f"Target locations saved to: {output_file}")
+            # Save to file (optional)
+            if save_runs and output_dir is not None:
+                output_file = output_dir / f"vlm_target_locations_run_{run_idx + 1}.json"
+                with open(output_file, 'w') as f:
+                    json.dump(vlm_data, f, indent=2)
+                print(f"\n===== VLM OUTPUT FOR RUN {run_idx + 1} SAVED =====")
+                print(f"Target locations saved to: {output_file}")
+            else:
+                print("\n===== VLM OUTPUT (NOT SAVED) =====")
+
             print(f"Number of cups: {len(vlm_data)}")
             print("JSON content:")
             print(json.dumps(vlm_data, indent=2))
@@ -191,9 +216,9 @@ def main(api_key: str, num_runs: int):
             print("Raw response:")
             print(response_4)
         except Exception as e:
-            print(f"Error saving VLM output on run {run_idx + 1}: {e}")
+            print(f"Error handling VLM output on run {run_idx + 1}: {e}")
 
-    if all_runs_data:
+    if all_runs_data and save_runs and output_dir is not None:
         aggregated_output_file = output_dir / "vlm_target_locations_all_runs.json"
         with open(aggregated_output_file, 'w') as f:
             json.dump(all_runs_data, f, indent=2)
@@ -205,5 +230,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run VLM-based cup placement task.")
     parser.add_argument("--api_key", type=str, required=True, help="OpenAI API key.")
     parser.add_argument("-n", "--num_runs", type=int, default=1, help="Number of times to run the VLM pipeline.")
+    parser.add_argument("--model_name", type=str, default="chatgpt-4o-latest", help="Name of the model to use.")
+    parser.add_argument("--save_runs", action="store_true", help="If set, save outputs under runs/<timestamp>/.")
     args = parser.parse_args()
-    main(args.api_key, args.num_runs)
+    main(args.api_key, args.num_runs, args.model_name, args.save_runs)
