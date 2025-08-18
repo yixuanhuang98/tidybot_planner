@@ -7,8 +7,8 @@ from datetime import datetime
 from pathlib import Path
 
 # === CONFIGURATION ===
-# IMAGE_PATH = "images/overview_000000_annotated.png"
-IMAGE_PATH = "images/8objs_small_2.png"
+IMAGE_PATH = "images/overview_000000_annotated_1.png"
+# IMAGE_PATH = "images/8objs_small_2.png"
 TEMPERATURE = 0.1
 TOP_P = 0.7
 MAX_TOKENS = 4096 * 3
