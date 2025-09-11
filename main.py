@@ -213,11 +213,11 @@ def main(args):
         else:
             # Default target locations - can be customized
             target_locations = [
-                np.array([0, 0, 0.38]),   # Center position
-                np.array([0.8, -0.08, 0.38]),  # Left position  
-                np.array([0.73, 0, 0.38]),     # Right position
-                np.array([0.8, 0.16, 0.38]),   # Far right position
-                np.array([0.8, -0.16, 0.38])   # Far left position
+                np.array([1.0, -0.04, 0.38]),   # Center position
+                np.array([1.0, 0.04, 0.38]),  # Left position  
+                np.array([0.9, -0.04, 0.38]),     # Right position
+                np.array([0.9, 0.04, 0.38]),   # Far right position
+                np.array([0.84, -0., 0.38])   # Far left position
             ]
         
         # Custom grasp parameters (optional)
