@@ -349,8 +349,8 @@ class PlaceState(Enum):
     APPROACH = auto()
     RELEASE = auto()
 
-# Motion Planner generated plan. 
-class MotionPlannerPolicy(Policy):
+# Motion Planner generated plan with phone safety control
+class MotionPlannerPolicy(TeleopPolicy):
     # Base following parameters (from BaseController)
     LOOKAHEAD_DISTANCE = 0.3  # 30 cm
     POSITION_TOLERANCE = 0.005  # 0.5 cm (reduced from 1.5 cm)
@@ -373,6 +373,9 @@ class MotionPlannerPolicy(Policy):
     PLACE_SUCCESS_THRESHOLD = 0.2
 
     def __init__(self):
+        # Initialize parent TeleopPolicy (sets up web server and listener)
+        super().__init__()
+        
         # Motion planning state - following controller.py pattern
         self.state = 'idle'  # States: idle, moving, manipulating, grasping
         self.current_command = None
@@ -388,13 +391,15 @@ class MotionPlannerPolicy(Policy):
         self.object_location = None
         self.target_location = None
         
-        # Enable policy execution immediately (no web interface required)
-        self.enabled = True
-        self.episode_ended = False
+        # Phone safety control - start disabled, require phone touch to enable
+        self.enabled = False
         
-        print(f'Motion planner policy initialized - ready to start automatically')
+        print(f'Motion planner policy initialized - touch phone screen to enable execution')
 
     def reset(self):
+        # Wait for user to signal that episode has started (from parent TeleopPolicy)
+        super().reset()
+        
         # Reset motion planning state
         self.state = 'idle'
         self.current_command = None
@@ -402,7 +407,6 @@ class MotionPlannerPolicy(Policy):
         self.current_waypoint_idx = 0
         self.target_ee_pos = None
         self.lookahead_position = None
-        self.episode_ended = False
         self.grasp_state = None
         
         # Clean up any grasp tracking variables
@@ -411,12 +415,17 @@ class MotionPlannerPolicy(Policy):
         if hasattr(self, 'initial_gripper_pos'):
             delattr(self, 'initial_gripper_pos')
         
-        # Enable policy execution immediately
-        self.enabled = True
+        # Start disabled - require phone touch to enable
+        self.enabled = False
         
-        print("Motion planner reset - starting episode automatically")
+        print("Motion planner reset - touch phone screen to enable execution")
 
     def step(self, obs):
+        # Handle episode state signals (from parent TeleopPolicy)
+        parent_result = super().step(obs)
+        if parent_result in ['end_episode', 'reset_env']:
+            return parent_result
+        
         # Return no action if episode has ended
         if self.episode_ended:
             return None
@@ -905,6 +914,19 @@ class MotionPlannerPolicy(Policy):
             waypoints = [curr_position, target_position]
             
         return {'waypoints': waypoints, 'target_ee_pos': target_ee_pos}
+
+    def _process_message(self, data):
+        """Process phone touch messages to enable/disable motion planner execution"""
+        if self.episode_ended:
+            # Run teleop controller if episode has ended
+            self.teleop_controller.process_message(data)
+        else:
+            # Enable motion planner execution if user is pressing on screen
+            self.enabled = 'teleop_mode' in data
+            if self.enabled:
+                print("Phone touch detected - motion planner enabled")
+            else:
+                print("Phone touch released - motion planner disabled")
 
 
 if __name__ == '__main__':
