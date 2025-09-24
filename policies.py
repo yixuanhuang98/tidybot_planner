@@ -360,9 +360,9 @@ class MotionPlannerPolicy(TeleopPolicy):
     PLACEMENT_X_OFFSET = 0.5  # 50cm in X direction
 
     # Manipulation parameters
-    ROBOT_BASE_HEIGHT = 0.48
-    PICK_APPROACH_HEIGHT_OFFSET = 0.25
-    PICK_LOWER_DIST = 0.08
+    ROBOT_BASE_HEIGHT = 0.37
+    PICK_APPROACH_HEIGHT_OFFSET = 0.15
+    PICK_LOWER_DIST = 0.10
     PICK_LIFT_DIST = 0.28  # Net lift is (PICK_LIFT_DIST - PICK_LOWER_DIST)
     PLACE_APPROACH_HEIGHT_OFFSET = 0.10
 
@@ -372,9 +372,12 @@ class MotionPlannerPolicy(TeleopPolicy):
     GRASP_TIMEOUT_S = 3.0
     PLACE_SUCCESS_THRESHOLD = 0.2
 
-    def __init__(self):
+    def __init__(self, use_real_env=False):
         # Initialize parent TeleopPolicy (sets up web server and listener)
         super().__init__()
+        
+        # Environment type
+        self.use_real_env = use_real_env
         
         # Motion planning state - following controller.py pattern
         self.state = 'idle'  # States: idle, moving, manipulating, grasping
@@ -387,14 +390,19 @@ class MotionPlannerPolicy(TeleopPolicy):
         # Base following parameters
         self.lookahead_position = None
         
-        # Object and target locations (using ground truth from MuJoCo)
+        # Object and target locations
         self.object_location = None
         self.target_location = None
+        
+        # Hard-coded locations for real environment
+        if self.use_real_env:
+            self.setup_real_env_locations()
         
         # Phone safety control - start disabled, require phone touch to enable
         self.enabled = False
         
-        print(f'Motion planner policy initialized - touch phone screen to enable execution')
+        env_type = "real" if use_real_env else "simulation"
+        print(f'Motion planner policy initialized for {env_type} environment - touch phone screen to enable execution')
 
     def reset(self):
         # Wait for user to signal that episode has started (from parent TeleopPolicy)
@@ -449,17 +457,25 @@ class MotionPlannerPolicy(TeleopPolicy):
         # State machine following controller.py pattern
         if self.state == 'idle':
             # Detect objects and plan new command
-            detected_objects = self.detect_objects_from_ground_truth(obs)
+            if self.use_real_env:
+                detected_objects = self.detect_objects_real_env(obs)
+                if detected_objects:
+                    # Use hard-coded locations for real environment
+                    self.object_location = detected_objects[0]
+                    self.target_location = self.real_target_location.copy()
+            else:
+                detected_objects = self.detect_objects_from_ground_truth(obs)
+                if detected_objects:
+                    # Create pick command
+                    self.object_location = detected_objects[0]
+                    # Set placement location relative to detected object (e.g., 50cm away)
+                    self.target_location = np.array([
+                        self.object_location[0] + self.PLACEMENT_X_OFFSET,  # 50cm in X direction
+                        self.object_location[1],        # Same Y as object
+                        self.object_location[2]         # Same Z as object (table height)
+                    ])
+            
             if detected_objects:
-                # Create pick command
-                self.object_location = detected_objects[0]
-                # Set placement location relative to detected object (e.g., 50cm away)
-                self.target_location = np.array([
-                    self.object_location[0] + self.PLACEMENT_X_OFFSET,  # 50cm in X direction
-                    self.object_location[1],        # Same Y as object
-                    self.object_location[2]         # Same Z as object (table height)
-                ])
-                
                 pick_command = {
                     'primitive_name': 'pick',
                     'waypoints': [base_pose[:2].tolist(), self.object_location[:2].tolist()],
@@ -914,6 +930,29 @@ class MotionPlannerPolicy(TeleopPolicy):
             waypoints = [curr_position, target_position]
             
         return {'waypoints': waypoints, 'target_ee_pos': target_ee_pos}
+
+    def setup_real_env_locations(self):
+        """Set up hard-coded locations for real environment"""
+        # Hard-coded mobile base starting pose [x, y, theta]
+        self.real_base_pose = np.array([0.0, 0.0, 0.0])  # Adjust based on your real robot setup
+        
+        # Hard-coded object location [x, y, z] - where the object to pick is located
+        self.real_object_location = np.array([0.8, 0., 0.2])  # Adjust based on your real setup
+        
+        # Hard-coded target placement location [x, y, z] - where to place the object
+        self.real_target_location = np.array([1.0, 0, 0.2])  # Adjust based on your real setup
+        
+        print(f"Real environment locations configured:")
+        print(f"  Base pose: {self.real_base_pose}")
+        print(f"  Object location: {self.real_object_location}")
+        print(f"  Target location: {self.real_target_location}")
+
+    def detect_objects_real_env(self, obs):
+        """Use hard-coded object location for real environment"""
+        if self.use_real_env and hasattr(self, 'real_object_location'):
+            print(f"Using hard-coded object location: {self.real_object_location}")
+            return [self.real_object_location.copy()]
+        return []
 
     def _process_message(self, data):
         """Process phone touch messages to enable/disable motion planner execution"""

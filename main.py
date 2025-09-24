@@ -94,7 +94,7 @@ def main(args):
 
     # Create policy
     if args.motion_planner:
-        policy = MotionPlannerPolicy()
+        policy = MotionPlannerPolicy(use_real_env=not args.sim)
     elif args.teleop:
         policy = TeleopPolicy()
     else:
