@@ -352,25 +352,26 @@ class PlaceState(Enum):
 # Motion Planner generated plan with phone safety control
 class MotionPlannerPolicy(TeleopPolicy):
     # Base following parameters (from BaseController)
-    LOOKAHEAD_DISTANCE = 0.3  # 30 cm
-    POSITION_TOLERANCE = 0.005  # 0.5 cm (reduced from 1.5 cm)
-    HEADING_TOLERANCE = math.radians(2.1)  # 2.1 degrees
+    LOOKAHEAD_DISTANCE = 0.3  # 30 cm (increased back for larger workspace)
+    POSITION_TOLERANCE = 0.015  # 1.5 cm (balanced for 0.5-0.7m distances)
+    HEADING_TOLERANCE = math.radians(2.5)  # 2.5 degrees (optimized for precise targeting)
 
-    # Object and target locations
-    PLACEMENT_X_OFFSET = 0.5  # 50cm in X direction
+    # Object and target locations (based on actual cube positions in new model)
+    # Cubes are at: (0.6,0,0.02), (0.5,0.2,0.02), (0.7,-0.2,0.02)
+    PLACEMENT_X_OFFSET = -0.2  # 20cm backward in X direction (towards robot base for safer placement)
 
-    # Manipulation parameters
+    # Manipulation parameters (adjusted for actual cube layout and height)
     ROBOT_BASE_HEIGHT = 0.48
-    PICK_APPROACH_HEIGHT_OFFSET = 0.25
-    PICK_LOWER_DIST = 0.08
-    PICK_LIFT_DIST = 0.28  # Net lift is (PICK_LIFT_DIST - PICK_LOWER_DIST)
-    PLACE_APPROACH_HEIGHT_OFFSET = 0.10
+    PICK_APPROACH_HEIGHT_OFFSET = 0.12  # 12cm above cube (cube at 0.02m + approach height)
+    PICK_LOWER_DIST = 0.05  # 5cm lower approach for precise 2cm cube grasping 
+    PICK_LIFT_DIST = 0.15  # 15cm lift (conservative but adequate for 2cm cubes)
+    PLACE_APPROACH_HEIGHT_OFFSET = 0.08  # 8cm approach for placement
 
-    # Grasping parameters
-    GRASP_SUCCESS_THRESHOLD = 0.55
-    GRASP_PROGRESS_THRESHOLD = 0.3
-    GRASP_TIMEOUT_S = 3.0
-    PLACE_SUCCESS_THRESHOLD = 0.2
+    # Grasping parameters (tuned for 2cm cube size at 0.02m height)
+    GRASP_SUCCESS_THRESHOLD = 0.35  # Adjusted for small cube grasping
+    GRASP_PROGRESS_THRESHOLD = 0.15  # Lower threshold for small object detection
+    GRASP_TIMEOUT_S = 5.0  # More patience for small object manipulation
+    PLACE_SUCCESS_THRESHOLD = 0.25  # Reliable placement threshold
 
     def __init__(self):
         # Initialize parent TeleopPolicy (sets up web server and listener)
@@ -499,7 +500,7 @@ class MotionPlannerPolicy(TeleopPolicy):
                     end_effector_offset = self.get_end_effector_offset(self.current_command['primitive_name'])
                     diff = abs(end_effector_offset - distance_to_target)
                     print(f"Distance to target EE: {distance_to_target:.3f}, EE offset: {end_effector_offset:.3f}, diff: {diff:.3f}")
-                    if diff < 0.002:  # 0.2 cm tolerance (reduced from 10 cm)
+                    if diff < 0.02:  # 2 cm tolerance (increased for larger workspace distances)
                         self.state = 'manipulating'
                         print("Base reached target, starting arm manipulation")
                     else:
@@ -560,7 +561,7 @@ class MotionPlannerPolicy(TeleopPolicy):
                     target_gripper_pos = np.array([0.0])  # Gripper open
 
                     print(f"Step 1: Positioning arm above object with open gripper")
-                    if np.allclose(arm_pos, target_arm_pos, atol=0.03):  # Tighter tolerance: 3cm
+                    if np.allclose(arm_pos, target_arm_pos, atol=0.025):  # 2.5cm tolerance (appropriate for workspace scale)
                         self.grasp_state = PickState.LOWER
                         print("Arm positioned above object, moving to lower approach")
                 
@@ -572,7 +573,7 @@ class MotionPlannerPolicy(TeleopPolicy):
                     target_gripper_pos = np.array([0.0])  # Gripper open
 
                     print(f"Step 2: Lowering gripper for precise approach... target: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
-                    if np.allclose(arm_pos, target_arm_pos, atol=0.02):  # Very tight tolerance: 2cm
+                    if np.allclose(arm_pos, target_arm_pos, atol=0.02):  # 2cm tolerance for precise grasping
                         self.grasp_state = PickState.GRASP
                         print("Gripper lowered to grasping position, closing gripper")
                 
@@ -617,7 +618,7 @@ class MotionPlannerPolicy(TeleopPolicy):
                     target_gripper_pos = np.array([1.0])  # Gripper closed
 
                     print(f"Step 4: Lifting object... target height: {target_arm_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
-                    if np.allclose(arm_pos, target_arm_pos, atol=0.05):  # 5cm tolerance
+                    if np.allclose(arm_pos, target_arm_pos, atol=0.04):  # 4cm tolerance (appropriate for lifting)
                         print("Object lifted successfully! Now moving to placement location.")
                         # Create place command
                         place_command = {
@@ -690,7 +691,7 @@ class MotionPlannerPolicy(TeleopPolicy):
                     target_gripper_pos = np.array([1.0])  # Gripper closed
 
                     print(f"Step 1: Positioning arm above placement location with closed gripper")
-                    if np.allclose(arm_pos, target_arm_pos, atol=0.05):  # 5cm tolerance
+                    if np.allclose(arm_pos, target_arm_pos, atol=0.04):  # 4cm tolerance for placement positioning
                         self.grasp_state = PlaceState.RELEASE
                         print("Arm positioned above placement location, opening gripper")
                 
