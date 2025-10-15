@@ -3,3 +3,7 @@ __pycache__
 .ipynb_checkpoints
 *.un~
 *.swp
+
+VLM/
+models_2/
+overview_images/
