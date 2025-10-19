@@ -98,7 +98,7 @@ def main(args):
     elif args.teleop:
         policy = TeleopPolicy()
     else:
-        policy = RemotePolicy()
+        policy = RemotePolicy(enable_web_server=not args.sim)
 
     try:
         while True:

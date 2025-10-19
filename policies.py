@@ -212,15 +212,20 @@ class TeleopController:
 
 # Teleop using WebXR phone web app
 class TeleopPolicy(Policy):
-    def __init__(self):
+    def __init__(self, enable_web_server=True):
         self.web_server_queue = Queue()
         self.teleop_controller = None
         self.teleop_state = None  # States: episode_started -> episode_ended -> reset_env
         self.episode_ended = False
+        self.enable_web_server = enable_web_server
 
-        # Web server for serving the WebXR phone web app
-        server = WebServer(self.web_server_queue)
-        threading.Thread(target=server.run, daemon=True).start()
+        if self.enable_web_server:
+            # Web server for serving the WebXR phone web app
+            server = WebServer(self.web_server_queue)
+            threading.Thread(target=server.run, daemon=True).start()
+            print("Web server started for teleop interface")
+        else:
+            print("Web server disabled (simulation mode)")
 
         # Listener thread to process messages from WebXR client
         threading.Thread(target=self.listener_loop, daemon=True).start()
@@ -229,10 +234,14 @@ class TeleopPolicy(Policy):
         self.teleop_controller = TeleopController()
         self.episode_ended = False
 
-        # Wait for user to signal that episode has started
-        self.teleop_state = None
-        while self.teleop_state != 'episode_started':
-            time.sleep(0.01)
+        if self.enable_web_server:
+            # Wait for user to signal that episode has started
+            self.teleop_state = None
+            while self.teleop_state != 'episode_started':
+                time.sleep(0.01)
+        else:
+            # In sim mode without web server, start episode immediately
+            self.teleop_state = 'episode_started'
 
     def step(self, obs):
         # Signal that user has ended episode
@@ -269,8 +278,8 @@ class TeleopPolicy(Policy):
 
 # Execute policy running on remote server
 class RemotePolicy(TeleopPolicy):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, enable_web_server=True):
+        super().__init__(enable_web_server=enable_web_server)
 
         # Use phone as enabling device during policy rollout
         self.enabled = False
@@ -282,8 +291,8 @@ class RemotePolicy(TeleopPolicy):
         print(f'Connected to policy server at {POLICY_SERVER_HOST}:{POLICY_SERVER_PORT}')
 
     def reset(self):
-        # Wait for user to signal that episode has started
-        super().reset()  # Note: Comment out to run without phone
+        # Wait for user to signal that episode has started (or skip if web server disabled)
+        super().reset()
 
         # Check connection to policy server and reset policy
         default_timeout = self.socket.getsockopt(zmq.RCVTIMEO)
@@ -295,8 +304,8 @@ class RemotePolicy(TeleopPolicy):
             raise Exception('Could not communicate with policy server') from e
         self.socket.setsockopt(zmq.RCVTIMEO, default_timeout)  # Put default timeout back
 
-        # Disable policy execution until user presses on screen
-        self.enabled = False  # Note: Set to True to run without phone
+        # Disable policy execution until user presses on screen (or enable immediately in sim mode)
+        self.enabled = not self.enable_web_server
 
     def _step(self, obs):
         # Return teleop command if episode has ended
