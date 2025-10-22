@@ -14,7 +14,9 @@ def should_save_episode(writer, args):
         return False
 
     # Prompt user whether to save episode
-    if not args.sim:
+    if args.sim and args.motion_planner:
+        return True
+    else:
         while True:
             user_input = input('Save episode (y/n)? ').strip().lower()
             if user_input == 'y':
@@ -23,8 +25,6 @@ def should_save_episode(writer, args):
                 print('Discarding episode')
                 return False
             print('Invalid response')
-    else:
-        return True
 
 def run_episode(env, policy, writer=None, args=None):
     # Reset the env
@@ -73,7 +73,7 @@ def run_episode(env, policy, writer=None, args=None):
                 # Save to disk in background thread
                 writer.flush_async()
 
-            if args.sim:
+            if args.sim and args.motion_planner:
                 print('Episode ended')
                 break
             else:

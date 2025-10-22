@@ -423,7 +423,7 @@ class MotionPlannerPolicy(Policy):
         # State machine following controller.py pattern
         if self.state == 'idle':
             # Detect objects and plan new command
-            detected_objects = self.detect_objects_from_ground_truth(obs)
+            detected_objects = self.detect_objects_from_ground_truth(obs, select_object_id=1)
             if detected_objects:
                 # Create pick command
                 self.object_location = detected_objects[0]
@@ -898,7 +898,7 @@ class MotionPlannerPolicy(Policy):
                     return t2
         return None
 
-    def detect_objects_from_ground_truth(self, obs):
+    def detect_objects_from_ground_truth(self, obs, select_object_id=-1):
         """Detect objects using ground truth from MuJoCo simulation and find the one with smallest x value"""
         detected_objects = []
         
@@ -915,11 +915,16 @@ class MotionPlannerPolicy(Policy):
         
         if cubes:
             # Sort cubes by x position and select the one with smallest x value
-            cubes.sort(key=lambda x: x[0][0])  # Sort by x coordinate (first element of position)
-            target_cube_pos, target_cube_id = cubes[0]
-            detected_objects.append(target_cube_pos)
-            print(f"Selected cube {target_cube_id} with smallest x value: {target_cube_pos[0]:.3f}")
-        
+            if select_object_id == -1:
+                cubes.sort(key=lambda x: x[0][0])  # Sort by x coordinate (first element of position)
+                target_cube_pos, target_cube_id = cubes[0]
+                detected_objects.append(target_cube_pos)
+                print(f"Selected cube {target_cube_id} with smallest x value: {target_cube_pos[0]:.3f}")
+
+            else:
+                target_cube_pos, target_cube_id = cubes[select_object_id]
+                detected_objects.append(target_cube_pos)
+                print(f"Selected cube {target_cube_id} based on user defined id")
         return detected_objects
 
 
