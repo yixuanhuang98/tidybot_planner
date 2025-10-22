@@ -8,22 +8,25 @@ from constants import POLICY_CONTROL_PERIOD
 from episode_storage import EpisodeWriter
 from policies import TeleopPolicy, RemotePolicy, MotionPlannerPolicy
 
-def should_save_episode(writer):
+def should_save_episode(writer, args):
     if len(writer) == 0:
         print('Discarding empty episode')
         return False
 
     # Prompt user whether to save episode
-    while True:
-        user_input = input('Save episode (y/n)? ').strip().lower()
-        if user_input == 'y':
-            return True
-        if user_input == 'n':
-            print('Discarding episode')
-            return False
-        print('Invalid response')
+    if not args.sim:
+        while True:
+            user_input = input('Save episode (y/n)? ').strip().lower()
+            if user_input == 'y':
+                return True
+            if user_input == 'n':
+                print('Discarding episode')
+                return False
+            print('Invalid response')
+    else:
+        return True
 
-def run_episode(env, policy, writer=None):
+def run_episode(env, policy, writer=None, args=None):
     # Reset the env
     print('Resetting env...')
     env.reset()
@@ -66,12 +69,17 @@ def run_episode(env, policy, writer=None):
             episode_ended = True
             print('Episode ended')
 
-            if writer is not None and should_save_episode(writer):
+            if writer is not None and should_save_episode(writer, args):
                 # Save to disk in background thread
                 writer.flush_async()
 
-            print('Teleop is now active. Press "Reset env" in the web app when ready to proceed.')
+            if args.sim:
+                print('Episode ended')
+                break
+            else:
+                print('Teleop is now active. Press "Reset env" in the web app when ready to proceed.')
 
+        
         # Ready for env reset
         elif action == 'reset_env':
             break
@@ -103,7 +111,7 @@ def main(args):
     try:
         while True:
             writer = EpisodeWriter(args.output_dir) if args.save else None
-            run_episode(env, policy, writer)
+            run_episode(env, policy, writer, args)
     finally:
         env.close()
 

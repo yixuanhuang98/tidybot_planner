@@ -358,6 +358,9 @@ class MotionPlannerPolicy(Policy):
         self.target_ee_pos = None
         self.grasp_step = 0  # 0: position arm with open gripper, 1: close gripper
         
+        # Arm mounting offset from base center (from tidybot.xml line 110)
+        self.ARM_MOUNT_OFFSET = np.array([0.1199, 0.0, 0.3948])  # x, y, z offset in base frame
+        
         # Base following parameters (from BaseController)
         self.LOOKAHEAD_DISTANCE = 0.3  # 30 cm
         self.lookahead_position = None
@@ -399,7 +402,7 @@ class MotionPlannerPolicy(Policy):
     def step(self, obs):
         # Return no action if episode has ended
         if self.episode_ended:
-            return None
+            return 'end_episode'
 
         # Return no action if robot is not enabled
         if not self.enabled:
@@ -470,12 +473,17 @@ class MotionPlannerPolicy(Policy):
                     end_effector_offset = self.get_end_effector_offset(self.current_command['primitive_name'])
                     diff = abs(end_effector_offset - distance_to_target)
                     print(f"Distance to target EE: {distance_to_target:.3f}, EE offset: {end_effector_offset:.3f}, diff: {diff:.3f}")
-                    if diff < 0.002:  # 0.2 cm tolerance (reduced from 10 cm)
-                        self.state = 'manipulating'
-                        print("Base reached target, starting arm manipulation")
-                    else:
-                        print(f'Too far from target end effector position ({(100 * diff):.1f} cm)')
-                        self.state = 'idle'
+                    if self.current_command['primitive_name'] == 'place':
+                        if diff < 0.05:  # 0.2 cm tolerance (reduced from 10 cm)
+                            self.state = 'manipulating'
+                            print("Base reached target, starting arm manipulation")
+                    elif self.current_command['primitive_name'] == 'pick':
+                        if diff < 0.005:  # 0.2 cm tolerance (reduced from 10 cm)
+                            self.state = 'manipulating'
+                            print("Base reached target, starting arm manipulation")
+                        else:
+                            print(f'Too far from target end effector position ({(100 * diff):.1f} cm)')
+                            self.state = 'idle'
                 else:
                     self.state = 'idle'
             else:
@@ -487,54 +495,80 @@ class MotionPlannerPolicy(Policy):
             
         elif self.state == 'manipulating':
             # Execute arm manipulation
+            # Important: All target positions are calculated relative to the arm mount point,
+            # but actions use arm_pos which is relative to base center (controller expects base-relative coords)
             if self.current_command['primitive_name'] == 'pick':
                 # Position arm above object and close gripper to grasp
                 # Use actual detected object 3D position
                 if 'object_3d_pos' in self.current_command:
                     object_3d_pos = self.current_command['object_3d_pos']
-                    # Calculate global position difference with better approach height
+                    
+                    # Calculate arm mount position in global frame (accounting for base rotation)
+                    base_angle = base_pose[2]
+                    cos_angle = math.cos(base_angle)
+                    sin_angle = math.sin(base_angle)
+                    arm_mount_global = np.array([
+                        base_pose[0] + cos_angle * self.ARM_MOUNT_OFFSET[0] - sin_angle * self.ARM_MOUNT_OFFSET[1],
+                        base_pose[1] + sin_angle * self.ARM_MOUNT_OFFSET[0] + cos_angle * self.ARM_MOUNT_OFFSET[1],
+                        base_pose[2]  # Not used for Z calculation
+                    ])
+                    
+                    # Calculate global position difference from arm mount point
                     global_diff = np.array([
-                        object_3d_pos[0] - base_pose[0],
-                        object_3d_pos[1] - base_pose[1], 
-                        object_3d_pos[2] + 0.25 - 0.48  # Object height + higher offset - base height (was 0.15, now 0.25)
+                        object_3d_pos[0] - arm_mount_global[0],
+                        object_3d_pos[1] - arm_mount_global[1], 
+                        object_3d_pos[2] + 0.25 - 0.48 - 0.053  # Object height + higher offset - arm mount height
                     ])
                     
                     # Transform to base's local coordinate frame (account for base rotation)
-                    base_angle = base_pose[2]
-                    cos_angle = math.cos(-base_angle)  # Negative for inverse rotation
-                    sin_angle = math.sin(-base_angle)
+                    cos_angle_inv = math.cos(-base_angle)  # Negative for inverse rotation
+                    sin_angle_inv = math.sin(-base_angle)
                     
                     object_relative_pos = np.array([
-                        cos_angle * global_diff[0] - sin_angle * global_diff[1],
-                        sin_angle * global_diff[0] + cos_angle * global_diff[1],
+                        cos_angle_inv * global_diff[0] - sin_angle_inv * global_diff[1],
+                        sin_angle_inv * global_diff[0] + cos_angle_inv * global_diff[1],
                         global_diff[2]  # Z component unchanged
                     ])
-                    print(f"Primary path: global_diff = {global_diff}")
+                    print(f"Primary path: arm_mount_global = {arm_mount_global}, global_diff = {global_diff}")
                 else:
                     # Fallback to target_ee_pos if object_3d_pos not available
+                    # Calculate arm mount position in global frame
+                    base_angle = base_pose[2]
+                    cos_angle = math.cos(base_angle)
+                    sin_angle = math.sin(base_angle)
+                    arm_mount_global = np.array([
+                        base_pose[0] + cos_angle * self.ARM_MOUNT_OFFSET[0] - sin_angle * self.ARM_MOUNT_OFFSET[1],
+                        base_pose[1] + sin_angle * self.ARM_MOUNT_OFFSET[0] + cos_angle * self.ARM_MOUNT_OFFSET[1],
+                        base_pose[2]
+                    ])
+                    
                     global_diff = np.array([
-                        self.target_ee_pos[0] - base_pose[0],
-                        self.target_ee_pos[1] - base_pose[1], 
-                        -0.33  # Slightly higher position for better top grasp approach
+                        self.target_ee_pos[0] - arm_mount_global[0],
+                        self.target_ee_pos[1] - arm_mount_global[1], 
+                        -0.33 - 0.053  # Slightly higher position for better top grasp approach
                     ])
                     
                     # Transform to base's local coordinate frame
-                    base_angle = base_pose[2]
-                    cos_angle = math.cos(-base_angle)
-                    sin_angle = math.sin(-base_angle)
+                    cos_angle_inv = math.cos(-base_angle)
+                    sin_angle_inv = math.sin(-base_angle)
                     
                     object_relative_pos = np.array([
-                        cos_angle * global_diff[0] - sin_angle * global_diff[1],
-                        sin_angle * global_diff[0] + cos_angle * global_diff[1],
+                        cos_angle_inv * global_diff[0] - sin_angle_inv * global_diff[1],
+                        sin_angle_inv * global_diff[0] + cos_angle_inv * global_diff[1],
                         global_diff[2]
                     ])
-                    print(f"Fallback path: global_diff = {global_diff}")
+                    print(f"Fallback path: arm_mount_global = {arm_mount_global}, global_diff = {global_diff}")
+                
+                # Transform arm_pos to be relative to arm mount for accurate comparison
+                # (arm_pos from obs is relative to base center, object_relative_pos is relative to arm mount)
+                arm_pos_from_mount = arm_pos - np.array([self.ARM_MOUNT_OFFSET[0], self.ARM_MOUNT_OFFSET[1], 0])
                 
                 print(f"Base angle: {base_pose[2]:.3f} rad ({math.degrees(base_pose[2]):.1f} deg)")
                 print(f"Object global pos: {self.current_command.get('object_3d_pos', 'N/A')}")
-                print(f"Transformed object_relative_pos = {object_relative_pos}")
-                print(f"Current arm pos: {arm_pos}")
-                print(f"Position error: {np.linalg.norm(arm_pos - object_relative_pos):.4f}m")
+                print(f"Transformed object_relative_pos (from arm mount) = {object_relative_pos}")
+                print(f"Current arm pos (from base center): {arm_pos}")
+                print(f"Current arm pos (from arm mount): {arm_pos_from_mount}")
+                print(f"Position error: {np.linalg.norm(arm_pos_from_mount - object_relative_pos):.4f}m")
                 print(f"Grasp step: {self.grasp_step}")
                 
                 if self.grasp_step == 0:
@@ -550,12 +584,11 @@ class MotionPlannerPolicy(Policy):
                     }
                     print(f"Step 1: Positioning arm above object with open gripper")
                     # Move to next step after arm is positioned
-                    if np.allclose(arm_pos, object_relative_pos, atol=0.03):  # Tighter tolerance: 3cm
+                    if np.allclose(arm_pos_from_mount, object_relative_pos, atol=0.03):  # Tighter tolerance: 3cm
                         self.grasp_step = 1
                         print("Arm positioned above object, moving to lower approach")
                 
                 elif self.grasp_step == 1:
-                    import pdb; pdb.set_trace()
                     # Step 2: Lower gripper closer to object for precise grasping
                     lower_pos = object_relative_pos.copy()
                     lower_pos[2] -= 0.08  # Lower by 8cm for closer approach (more conservative)
@@ -565,8 +598,8 @@ class MotionPlannerPolicy(Policy):
                         'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
                         'gripper_pos': np.array([0.0])  # Keep gripper open while lowering
                     }
-                    print(f"Step 2: Lowering gripper for precise approach... target: {lower_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
-                    if np.allclose(arm_pos, lower_pos, atol=0.02):  # Very tight tolerance: 2cm
+                    print(f"Step 2: Lowering gripper for precise approach... target: {lower_pos[2]:.3f}, current: {arm_pos_from_mount[2]:.3f}")
+                    if np.allclose(arm_pos_from_mount, lower_pos, atol=0.02):  # Very tight tolerance: 2cm
                         self.grasp_step = 2
                         print("Gripper lowered to grasping position, closing gripper")
                 
@@ -617,8 +650,8 @@ class MotionPlannerPolicy(Policy):
                         'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
                         'gripper_pos': np.array([1.0])  # Keep gripper closed
                     }
-                    print(f"Step 4: Lifting object... target height: {lifted_pos[2]:.3f}, current: {arm_pos[2]:.3f}")
-                    if np.allclose(arm_pos, lifted_pos, atol=0.05):  # 5cm tolerance
+                    print(f"Step 4: Lifting object... target height: {lifted_pos[2]:.3f}, current: {arm_pos_from_mount[2]:.3f}")
+                    if np.allclose(arm_pos_from_mount, lifted_pos, atol=0.05):  # 5cm tolerance
                         print("Object lifted successfully! Now moving to placement location.")
                         # Create place command to move to placement location (already set dynamically)
                         place_command = {
@@ -649,44 +682,69 @@ class MotionPlannerPolicy(Policy):
                 # Use actual target 3D position
                 if 'target_3d_pos' in self.current_command:
                     target_3d_pos = self.current_command['target_3d_pos']
-                    # Calculate global position difference
+                    
+                    # Calculate arm mount position in global frame (accounting for base rotation)
+                    base_angle = base_pose[2]
+                    cos_angle = math.cos(base_angle)
+                    sin_angle = math.sin(base_angle)
+                    arm_mount_global = np.array([
+                        base_pose[0] + cos_angle * self.ARM_MOUNT_OFFSET[0] - sin_angle * self.ARM_MOUNT_OFFSET[1],
+                        base_pose[1] + sin_angle * self.ARM_MOUNT_OFFSET[0] + cos_angle * self.ARM_MOUNT_OFFSET[1],
+                        base_pose[2]  # Not used for Z calculation
+                    ])
+                    
+                    # Calculate global position difference from arm mount point
                     global_diff = np.array([
-                        target_3d_pos[0] - base_pose[0],
-                        target_3d_pos[1] - base_pose[1], 
-                        target_3d_pos[2] + 0.10 - 0.48  # Target height + offset - base height
+                        target_3d_pos[0] - arm_mount_global[0],
+                        target_3d_pos[1] - arm_mount_global[1], 
+                        target_3d_pos[2] + 0.10 - self.ARM_MOUNT_OFFSET[2] - 0.053  # Target height + offset - arm mount height
                     ])
                     
                     # Transform to base's local coordinate frame (account for base rotation)
-                    base_angle = base_pose[2]
-                    cos_angle = math.cos(-base_angle)  # Negative for inverse rotation
-                    sin_angle = math.sin(-base_angle)
+                    cos_angle_inv = math.cos(-base_angle)  # Negative for inverse rotation
+                    sin_angle_inv = math.sin(-base_angle)
                     
                     target_relative_pos = np.array([
-                        cos_angle * global_diff[0] - sin_angle * global_diff[1],
-                        sin_angle * global_diff[0] + cos_angle * global_diff[1],
+                        cos_angle_inv * global_diff[0] - sin_angle_inv * global_diff[1],
+                        sin_angle_inv * global_diff[0] + cos_angle_inv * global_diff[1],
                         global_diff[2]  # Z component unchanged
                     ])
                 else:
                     # Fallback to target_ee_pos if target_3d_pos not available
+                    # Calculate arm mount position in global frame
+                    base_angle = base_pose[2]
+                    cos_angle = math.cos(base_angle)
+                    sin_angle = math.sin(base_angle)
+                    arm_mount_global = np.array([
+                        base_pose[0] + cos_angle * self.ARM_MOUNT_OFFSET[0] - sin_angle * self.ARM_MOUNT_OFFSET[1],
+                        base_pose[1] + sin_angle * self.ARM_MOUNT_OFFSET[0] + cos_angle * self.ARM_MOUNT_OFFSET[1],
+                        base_pose[2]
+                    ])
+                    
                     global_diff = np.array([
-                        self.target_ee_pos[0] - base_pose[0],
-                        self.target_ee_pos[1] - base_pose[1], 
+                        self.target_ee_pos[0] - arm_mount_global[0],
+                        self.target_ee_pos[1] - arm_mount_global[1], 
                         -0.30  # Position slightly above target for placement
                     ])
                     
                     # Transform to base's local coordinate frame
-                    base_angle = base_pose[2]
-                    cos_angle = math.cos(-base_angle)
-                    sin_angle = math.sin(-base_angle)
+                    cos_angle_inv = math.cos(-base_angle)
+                    sin_angle_inv = math.sin(-base_angle)
                     
                     target_relative_pos = np.array([
-                        cos_angle * global_diff[0] - sin_angle * global_diff[1],
-                        sin_angle * global_diff[0] + cos_angle * global_diff[1],
+                        cos_angle_inv * global_diff[0] - sin_angle_inv * global_diff[1],
+                        sin_angle_inv * global_diff[0] + cos_angle_inv * global_diff[1],
                         global_diff[2]
                     ])
                 
-                print(f"Placing: target_relative_pos = {target_relative_pos}")
+                # Transform arm_pos to be relative to arm mount for accurate comparison
+                arm_pos_from_mount = arm_pos - np.array([self.ARM_MOUNT_OFFSET[0], self.ARM_MOUNT_OFFSET[1], 0])
+                
+                print(f"Placing: target_relative_pos (from arm mount) = {target_relative_pos}")
+                print(f"Current arm pos (from base center): {arm_pos}")
+                print(f"Current arm pos (from arm mount): {arm_pos_from_mount}")
                 print(f"Target EE pos: {self.target_ee_pos}, Base pose: {base_pose}")
+                print(f"Position error: {np.linalg.norm(arm_pos_from_mount - target_relative_pos):.4f}m")
                 print(f"Grasp step: {self.grasp_step}")
                 
                 if self.grasp_step == 0:
@@ -699,7 +757,7 @@ class MotionPlannerPolicy(Policy):
                     }
                     print(f"Step 1: Positioning arm above placement location with closed gripper")
                     # Move to next step after arm is positioned
-                    if np.allclose(arm_pos, target_relative_pos, atol=0.05):  # 5cm tolerance
+                    if np.allclose(arm_pos_from_mount, target_relative_pos, atol=0.05):  # 5cm tolerance
                         self.grasp_step = 1
                         print("Arm positioned above placement location, opening gripper")
                 
@@ -719,7 +777,7 @@ class MotionPlannerPolicy(Policy):
                 
                 return action
 
-        # Default: hold current pose
+        
         action = {
             'base_pose': base_pose.copy(),
             'arm_pos': arm_pos.copy(),
@@ -807,10 +865,11 @@ class MotionPlannerPolicy(Policy):
             target_heading += frac * heading_diff
             print(f"Heading: current={base_pose[2]:.3f}, desired={desired_heading:.3f}, diff={heading_diff:.3f}, frac={frac:.3f}, target={target_heading:.3f}")
         
+        arm_pos_from_mount = obs['arm_pos'] - np.array([self.ARM_MOUNT_OFFSET[0], self.ARM_MOUNT_OFFSET[1], 0])
         # Create action to move towards target
         action = {
             'base_pose': np.array([target_position[0], target_position[1], target_heading]),
-            'arm_pos': obs['arm_pos'].copy(),
+            'arm_pos': arm_pos_from_mount.copy(),
             'arm_quat': obs['arm_quat'].copy(),
             'gripper_pos': obs['gripper_pos'].copy(),
         }
@@ -891,7 +950,7 @@ class MotionPlannerPolicy(Policy):
         # Simplified version - assume gripper starts open
         gripper_open = True  
         if gripper_open:
-            return 0.55
+            return 0.55 + 0.12
         return {'toss': 1.30, 'shelf': 0.75, 'drawer': 0.80}.get(primitive_name, 0.55)
 
     def build_base_command(self, command):

@@ -268,7 +268,7 @@ class MujocoSim:
         cubes = [self.qpos_cube1, self.qpos_cube2, self.qpos_cube3]
         for i, cube_qpos in enumerate(cubes):
             # Randomize position within a reasonable range around the table
-            # cube_qpos[:2] += np.random.uniform(-0.3, 0.3, 2)  # X and Y position
+            cube_qpos[:2] += np.random.uniform(-0.3, 0.3, 2)  # X and Y position
             # Keep Z position at table height (don't randomize vertical position)
             
             # Randomize orientation around Z-axis (yaw)
@@ -338,7 +338,7 @@ class MujocoSim:
 
 class MujocoEnv:
     def __init__(self, render_images=True, show_viewer=True, show_images=True):
-        self.mjcf_path = 'models/stanford_tidybot/scene.xml'
+        self.mjcf_path = 'models/stanford_tidybot/ground_scene.xml'
         self.render_images = render_images
         self.show_viewer = show_viewer
         self.show_images = show_images
