@@ -543,6 +543,9 @@ class MotionPlannerPolicy(Policy):
                         'base_pose': base_pose.copy(),
                         'arm_pos': object_relative_pos,  # Position arm above object
                         'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
+                        # 'arm_quat': np.array([0.71334776,  0.70182338, 0.03010257,  0.01993094]),
+                        # 'arm_quat': np.array([0.707,  0., 0.707,  0.]),
+                        # 'arm_quat': np.array([0.6204814, 0.3390396, 0.6206078, 0.3389705]),
                         'gripper_pos': np.array([0.0])  # Keep gripper open while positioning
                     }
                     print(f"Step 1: Positioning arm above object with open gripper")
@@ -552,6 +555,7 @@ class MotionPlannerPolicy(Policy):
                         print("Arm positioned above object, moving to lower approach")
                 
                 elif self.grasp_step == 1:
+                    import pdb; pdb.set_trace()
                     # Step 2: Lower gripper closer to object for precise grasping
                     lower_pos = object_relative_pos.copy()
                     lower_pos[2] -= 0.08  # Lower by 8cm for closer approach (more conservative)
