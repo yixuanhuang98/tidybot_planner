@@ -12,7 +12,7 @@ from constants import POLICY_CONTROL_FREQ
 
 def write_frames_to_mp4(frames, mp4_path):
     height, width, _ = frames[0].shape
-    fourcc = cv.VideoWriter_fourcc(*'avc1')
+    fourcc = cv.VideoWriter_fourcc(*'mp4v')
     out = cv.VideoWriter(str(mp4_path), fourcc, POLICY_CONTROL_FREQ, (width, height))
     for frame in frames:
         bgr_frame = cv.cvtColor(frame, cv.COLOR_RGB2BGR)
@@ -45,8 +45,8 @@ class EpisodeWriter:
         self.flush_thread = None
 
     def step(self, obs, action):
-        if len(self.observations) == 0 and not np.allclose(obs['base_pose'], 0.0, atol=0.03):
-            raise Exception('Initial base pose should be zero. Did the base get pushed?')
+        # if len(self.observations) == 0 and not np.allclose(obs['base_pose'], 0.0, atol=0.03):
+        #     raise Exception('Initial base pose should be zero. Did the base get pushed?')
         self.timestamps.append(time.time())
         self.observations.append(obs)
         self.actions.append(action)
