@@ -56,6 +56,7 @@ def main(input_dir, output_path):
             for k, v in observations.items():
                 episode_group.create_dataset(f'obs/{k}', data=np.array(v))
             episode_group.create_dataset('actions', data=np.array(actions))
+            episode_group.create_dataset('language', data="pick up the red block and place it forward by 50cm.")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
