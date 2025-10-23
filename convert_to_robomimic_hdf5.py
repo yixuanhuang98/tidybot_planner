@@ -14,7 +14,7 @@ from tqdm import tqdm
 from constants import POLICY_IMAGE_WIDTH, POLICY_IMAGE_HEIGHT
 from episode_storage import EpisodeReader
 
-def main(input_dir, output_path):
+def main(input_dir, output_path, args):
     # Get list of episode dirs
     episode_dirs = sorted([child for child in Path(input_dir).iterdir() if child.is_dir()])
 
@@ -25,6 +25,8 @@ def main(input_dir, output_path):
         # Iterate through episodes
         for episode_idx, episode_dir in enumerate(tqdm(episode_dirs)):
             # Load episode data
+            if episode_idx >= args.max_episodes:
+                break
             reader = EpisodeReader(episode_dir)
 
             # Extract observations
@@ -41,14 +43,24 @@ def main(input_dir, output_path):
                     observations[k].append(v)
 
             # Extract actions
-            actions = [
-                np.concatenate((
-                    action['base_pose'],
-                    action['arm_pos'],
-                    Rotation.from_quat(action['arm_quat']).as_rotvec(),  # Convert quat to axis-angle
-                    action['gripper_pos'],
-                )) for action in reader.actions
-            ]
+            if args.quaternion:
+                actions = [
+                    np.concatenate((
+                        action['base_pose'],
+                        action['arm_pos'],
+                        action['arm_quat'],  # Convert quat to axis-angle
+                        action['gripper_pos'],
+                    )) for action in reader.actions
+                ]
+            else:  # Convert quat to axis-angle
+                actions = [
+                    np.concatenate((
+                        action['base_pose'],
+                        action['arm_pos'],
+                        Rotation.from_quat(action['arm_quat']).as_rotvec(),  # Convert quat to axis-angle
+                        action['gripper_pos'],
+                    )) for action in reader.actions
+                ]
 
             # Write to HDF5
             episode_key = f'demo_{episode_idx}'
@@ -56,11 +68,15 @@ def main(input_dir, output_path):
             for k, v in observations.items():
                 episode_group.create_dataset(f'obs/{k}', data=np.array(v))
             episode_group.create_dataset('actions', data=np.array(actions))
-            episode_group.create_dataset('language', data="pick up the red block and place it forward by 50cm.")
+            if args.language:
+                episode_group.create_dataset('language', data="pick up the red block and place it forward by 50cm.")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--input-dir', default='data/demos')
     parser.add_argument('--output-path', default='data/demos.hdf5')
+    parser.add_argument('--language', type=bool, default=False)
+    parser.add_argument('--quaternion', type=bool, default=False)
+    parser.add_argument('--max_episodes', type=int, default=1000000)
     args = parser.parse_args()
-    main(args.input_dir, args.output_path)
+    main(args.input_dir, args.output_path, args = args)
