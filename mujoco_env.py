@@ -115,9 +115,14 @@ class BaseController:
         self.otg_inp.max_acceleration = [0.5, 0.5, 2.36]
         self.otg_res = None
 
-    def reset(self):
+    def reset(self, base_reset_pose=None):
         # Initialize base at origin
-        self.qpos[:] = np.zeros(3)
+        if base_reset_pose is None:
+            self.qpos[:] = np.zeros(3)
+            self.qpos[:1] = np.random.uniform(-1, 1)
+            self.qpos[2] = np.random.uniform(-np.pi, np.pi)
+        else:
+            self.qpos[:] = base_reset_pose
         self.ctrl[:] = self.qpos
 
         # Initialize OTG
@@ -266,10 +271,13 @@ class MujocoSim:
 
         # Randomize positions and orientations for all three cubes
         cubes = [self.qpos_cube1, self.qpos_cube2, self.qpos_cube3]
+        
         for i, cube_qpos in enumerate(cubes):
             # Randomize position within a reasonable range around the table
-            cube_qpos[0] += np.random.uniform(-0.1, 0.1, 1)  # X position
-            cube_qpos[1] += np.random.uniform(-0.2, 0.2, 1)  # X position
+            # cube_qpos[0] += np.random.uniform(-0.1, 0.1, 1)  # X position
+            # cube_qpos[1] += np.random.uniform(-0.2, 0.2, 1)  # Y position
+
+            cube_qpos[:2] = np.random.uniform(-0.7, 0.7, 2)
             # Keep Z position at table height (don't randomize vertical position)
             
             # Randomize orientation around Z-axis (yaw)
@@ -280,8 +288,22 @@ class MujocoSim:
         
         mujoco.mj_forward(self.model, self.data)
 
+
+        base_reset_pose = np.zeros(3)
+        for _ in range(100):
+            base_reset_pose[:1] = np.random.uniform(-1, 1)
+            base_reset_pose[2] = np.random.uniform(-np.pi, np.pi)
+            is_valid = True
+            for cube_qpos in cubes:
+                if np.linalg.norm(cube_qpos[:2] - base_reset_pose[:2]) < 0.35:
+                    is_valid = False
+                    break
+            print(f"Cube 1 pos: [{cubes[0][0]:.3f}, {cubes[0][1]:.3f}], Cube 2 pos: [{cubes[1][0]:.3f}, {cubes[1][1]:.3f}], Cube 3 pos: [{cubes[2][0]:.3f}, {cubes[2][1]:.3f}]")
+            print(f"Base reset pose: [{base_reset_pose[0]:.3f}, {base_reset_pose[1]:.3f}, {base_reset_pose[2]:.3f}], is_valid: {is_valid}")
+            if is_valid:
+                break
         # Reset controllers
-        self.base_controller.reset()
+        self.base_controller.reset(base_reset_pose)
         self.arm_controller.reset()
 
     def control_callback(self, *_):

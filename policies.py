@@ -873,6 +873,8 @@ class MotionPlannerPolicy(Policy):
             'arm_quat': obs['arm_quat'].copy(),
             'gripper_pos': obs['gripper_pos'].copy(),
         }
+
+        # import pdb; pdb.set_trace()
         
         return action
 

@@ -69,7 +69,7 @@ def main(input_dir, output_path, args):
                 episode_group.create_dataset(f'obs/{k}', data=np.array(v))
             episode_group.create_dataset('actions', data=np.array(actions))
             if args.language:
-                episode_group.create_dataset('language', data="pick up the red block and place it forward by 50cm.")
+                episode_group.create_dataset('language', data="Pick the red block and place it in the +x direction by 0.5m.")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
