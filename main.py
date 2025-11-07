@@ -56,6 +56,9 @@ def run_episode(env, policy, writer=None, args=None):
         if action is None:
             continue
 
+        if step_idx > 300:
+            break # avoid infinite loop
+        
         # Execute valid action on robot
         if isinstance(action, dict):
             env.step(action)
@@ -68,6 +71,7 @@ def run_episode(env, policy, writer=None, args=None):
         elif not episode_ended and action == 'end_episode':
             episode_ended = True
             print('Episode ended')
+            print('step_idx', step_idx)
 
             if writer is not None and should_save_episode(writer, args):
                 # Save to disk in background thread
