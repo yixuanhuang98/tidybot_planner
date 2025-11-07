@@ -91,11 +91,55 @@ def run_episode(env, policy, writer=None, args=None):
 def main(args):
     # Create env
     if args.sim:
-        from mujoco_env import MujocoEnv
-        if args.teleop:
-            env = MujocoEnv(show_images=True)
+        # Use customizable environment if specified
+        if args.custom_env:
+            from customizable_env import CustomizableMujocoEnv
+            from env_configs import get_config, create_random_config
+
+            # Load configuration
+            if args.env_config:
+                # Use predefined config
+                env_config = get_config(args.env_config)
+            elif args.random_env:
+                # Create random config
+                env_config = create_random_config(
+                    floor=args.floor_texture,
+                    object_category=args.object_category,
+                    num_objects=args.num_objects,
+                    headless=(not args.teleop)
+                )
+            else:
+                # Custom config from command line
+                env_config = {
+                    'floor_texture': args.floor_texture,
+                    'objects': args.objects.split(',') if args.objects else ['apple.glb', 'banana.glb', 'tomato.glb'],
+                    'render_images': True,
+                    'show_viewer': not args.render_only,  # Hide viewer in render-only mode
+                    'show_images': args.teleop
+                }
+
+            env = CustomizableMujocoEnv(**env_config)
+
+            # Offline rendering mode
+            if args.render_only:
+                print("\n=== Offline Rendering Mode ===")
+                try:
+                    env.render_first_frame(
+                        output_dir=args.render_output_dir,
+                        prefix=args.render_prefix,
+                        save_state=True
+                    )
+                    print("\nRendering complete! Exiting...")
+                finally:
+                    env.close()
+                return  # Exit after rendering
         else:
-            env = MujocoEnv()
+            # Use default MujocoEnv
+            from mujoco_env import MujocoEnv
+            if args.teleop:
+                env = MujocoEnv(show_images=True)
+            else:
+                env = MujocoEnv()
     else:
         from real_env import RealEnv
         env = RealEnv()
@@ -117,9 +161,36 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--sim', action='store_true')
-    parser.add_argument('--teleop', action='store_true')
-    parser.add_argument('--motion_planner', action='store_true')
-    parser.add_argument('--save', action='store_true')
-    parser.add_argument('--output-dir', default='data/demos')
+    parser.add_argument('--sim', action='store_true', help='Use simulation environment')
+    parser.add_argument('--teleop', action='store_true', help='Enable teleoperation')
+    parser.add_argument('--motion_planner', action='store_true', help='Use motion planner policy')
+    parser.add_argument('--save', action='store_true', help='Save episodes to disk')
+    parser.add_argument('--output-dir', default='data/demos', help='Directory to save episodes')
+
+    # Customizable environment options
+    parser.add_argument('--custom-env', action='store_true',
+                       help='Use customizable environment with custom objects and textures')
+    parser.add_argument('--env-config', type=str, default=None,
+                       help='Predefined environment config name (e.g., pick_place_fruits, sorting_mixed)')
+    parser.add_argument('--random-env', action='store_true',
+                       help='Use randomly generated environment configuration')
+    parser.add_argument('--floor-texture', type=str, default=None,
+                       help='Floor texture name or path (e.g., light_wood_v3.png)')
+    parser.add_argument('--objects', type=str, default=None,
+                       help='Comma-separated list of objects (e.g., apple.glb,banana.glb,tomato.glb)')
+    parser.add_argument('--object-category', type=str, default='fruits',
+                       choices=['fruits', 'vegetables', 'containers', 'tools',
+                               'robocasa_fruits', 'robocasa_vegetables', 'robocasa_containers', "easygrasp_objects"],
+                       help='Object category for random environment generation')
+    parser.add_argument('--num-objects', type=int, default=3,
+                       help='Number of objects for random environment generation')
+
+    # Offline rendering options
+    parser.add_argument('--render-only', action='store_true',
+                       help='Offline rendering mode: render first frame and exit (requires --custom-env)')
+    parser.add_argument('--render-output-dir', type=str, default='env_renders',
+                       help='Directory to save rendered images')
+    parser.add_argument('--render-prefix', type=str, default='env',
+                       help='Prefix for rendered image filenames')
+
     main(parser.parse_args())

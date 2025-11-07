@@ -84,6 +84,11 @@ class Renderer:
 
         # Set up scene
         self.scene_option = mujoco.MjvOption()
+        # Explicitly enable visual geometry groups (0, 1, 2) to ensure robot visuals are rendered
+        self.scene_option.geomgroup[0] = 1  # Group 0 (default geoms like floor)
+        self.scene_option.geomgroup[1] = 1  # Group 1
+        self.scene_option.geomgroup[2] = 1  # Group 2 (robot visual meshes, including wheels)
+        self.scene_option.geomgroup[3] = 0  # Group 3 (collision geoms - hidden for clean visuals)
         self.scene = mujoco.MjvScene(model, 10000)
 
     def render(self):

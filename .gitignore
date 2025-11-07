@@ -9,3 +9,10 @@ VLM/
 models_2/
 overview_images/
 data/
+
+environment_assets/
+
+# Customizable environment cache and outputs
+models/stanford_tidybot/.custom_scene_*.xml
+env_renders/
+test_renders/
