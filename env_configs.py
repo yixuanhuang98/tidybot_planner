@@ -45,9 +45,13 @@ ROBOCASA_FRUITS = [
 ]
 
 EASYGRASP_OBJECTS = [
-    'apple_0', 'bar_soap_0', 'boxed_drink_0', "bell_pepper_0", "cake_0",
-    "lemon_0", "orange_1", "potato_0", "water_bottle_0", "avocado_0"
+    'bar_soap_0', 'boxed_drink_0', "cake_0"
 ]
+
+# EASYGRASP_OBJECTS = [
+#     'apple_0', 'bar_soap_0', 'boxed_drink_0', "bell_pepper_0", "cake_0",
+#     "lemon_0", "orange_1", "potato_0", "water_bottle_0", "avocado_0"
+# ]
 
 ROBOCASA_VEGETABLES = [
     'carrot_0', 'carrot_1', 'cucumber_0', 'cucumber_1',
@@ -108,7 +112,7 @@ class EnvConfigBuilder:
 
     def headless(self) -> 'EnvConfigBuilder':
         """Configure for headless operation (no viewer)."""
-        self.config['show_viewer'] = False
+        self.config['show_viewer'] = True
         self.config['show_images'] = False
         return self
 
@@ -169,7 +173,7 @@ ENV_CONFIGS = {
         'floor_texture': FLOOR_TEXTURES['wood_light'],
         'objects': ['apple.glb', 'banana.glb', 'tomato.glb'],
         'render_images': True,
-        'show_viewer': False,
+        'show_viewer': True,
         'show_images': False
     },
 

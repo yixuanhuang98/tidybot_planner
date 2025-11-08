@@ -904,8 +904,16 @@ class MotionPlannerPolicy(Policy):
         
         # Get all three cube positions from MuJoCo environment
         cubes = []
+        cube_keys = []
+        for key in obs:
+            print('key: ', key)
+            if '0_pos' in key:
+                cube_keys.append(key)
         for i in range(1, 4):
-            cube_key = f'cube{i}_pos'
+            # cube_key = f'cube{i}_pos'
+            cube_key = cube_keys[i-1]
+            print('obs keys: ', obs.keys())
+            
             if cube_key in obs:
                 cube_pos = obs[cube_key].copy()
                 cubes.append((cube_pos, i))
