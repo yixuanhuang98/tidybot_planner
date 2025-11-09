@@ -133,6 +133,7 @@ class CustomizableMujocoSim(MujocoSim):
 
             # Randomize orientation around Z-axis (yaw)
             theta = np.random.uniform(-math.pi, math.pi)
+            # theta = 0
             obj_qpos[3:7] = np.array([math.cos(theta / 2), 0, 0, math.sin(theta / 2)])
 
             obj_name = self.custom_object_names[i] if i < len(self.custom_object_names) else f'object_{i}'

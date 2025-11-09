@@ -426,7 +426,9 @@ class MotionPlannerPolicy(Policy):
             detected_objects = self.detect_objects_from_ground_truth(obs, select_object_id=1)
             if detected_objects:
                 # Create pick command
-                self.object_location = detected_objects[0]
+                self.object_location = detected_objects[0][0]
+                self.target_object_key = detected_objects[0][2]
+                self.target_object_quat = detected_objects[0][1]
                 # Set placement location relative to detected object (e.g., 50cm away)
                 self.target_location = np.array([
                     self.object_location[0] + 0.5,  # 50cm in X direction
@@ -529,7 +531,16 @@ class MotionPlannerPolicy(Policy):
                         sin_angle_inv * global_diff[0] + cos_angle_inv * global_diff[1],
                         global_diff[2]  # Z component unchanged
                     ])
+                    
+                    # Transform object quaternion to base's local coordinate frame
+                    # Object quat is in global frame, need to transform to base-local frame
+                    base_z_rot = R.from_rotvec(np.array([0.0, 0.0, 1.0]) * base_angle)
+                    object_global_rot = R.from_quat(self.target_object_quat)
+                    object_relative_rot = base_z_rot.inv() * object_global_rot
+                    object_relative_quat = object_relative_rot.as_quat()
+                    
                     print(f"Primary path: arm_mount_global = {arm_mount_global}, global_diff = {global_diff}")
+                    print(f"Object global quat: {self.target_object_quat}, object_relative_quat: {object_relative_quat}")
                 else:
                     # Fallback to target_ee_pos if object_3d_pos not available
                     # Calculate arm mount position in global frame
@@ -557,15 +568,40 @@ class MotionPlannerPolicy(Policy):
                         sin_angle_inv * global_diff[0] + cos_angle_inv * global_diff[1],
                         global_diff[2]
                     ])
+                    
+                    # Transform object quaternion to base's local coordinate frame (fallback path)
+                    base_z_rot = R.from_rotvec(np.array([0.0, 0.0, 1.0]) * base_angle)
+                    object_global_rot = R.from_quat(self.target_object_quat)
+                    object_relative_rot = base_z_rot.inv() * object_global_rot
+                    object_relative_quat = object_relative_rot.as_quat()
+                    
                     print(f"Fallback path: arm_mount_global = {arm_mount_global}, global_diff = {global_diff}")
+                    print(f"Object global quat (fallback): {self.target_object_quat}, object_relative_quat: {object_relative_quat}")
                 
                 # Transform arm_pos to be relative to arm mount for accurate comparison
                 # (arm_pos from obs is relative to base center, object_relative_pos is relative to arm mount)
                 arm_pos_from_mount = arm_pos - np.array([self.ARM_MOUNT_OFFSET[0], self.ARM_MOUNT_OFFSET[1], 0])
                 
+                # Compute adapted grasp quaternion based on object orientation
+                # Default: [1, 0, 0, 0] = gripper pointing down
+                # Adapt: Align gripper's yaw with object's yaw while maintaining top-down approach
+                object_rot = R.from_quat(object_relative_quat)
+                
+                # Extract yaw (Z-axis rotation) from object orientation
+                object_euler = object_rot.as_euler('xyz')
+                object_yaw = object_euler[2]
+                
+                # Create grasp orientation: pointing down (180° around X) + object's yaw
+                # This maintains top-down grasp while aligning with object's rotation
+                grasp_rot = R.from_euler('xz', [np.pi, object_yaw])  # 180° pitch (point down) + object yaw
+                adapted_grasp_quat = grasp_rot.as_quat()
+                
                 print(f"Base angle: {base_pose[2]:.3f} rad ({math.degrees(base_pose[2]):.1f} deg)")
                 print(f"Object global pos: {self.current_command.get('object_3d_pos', 'N/A')}")
                 print(f"Transformed object_relative_pos (from arm mount) = {object_relative_pos}")
+                print(f"Transformed object_relative_quat (in base frame) = {object_relative_quat}")
+                print(f"Object yaw: {object_yaw:.3f} rad ({math.degrees(object_yaw):.1f} deg)")
+                print(f"Adapted grasp quat: {adapted_grasp_quat} (default: [1,0,0,0])")
                 print(f"Current arm pos (from base center): {arm_pos}")
                 print(f"Current arm pos (from arm mount): {arm_pos_from_mount}")
                 print(f"Position error: {np.linalg.norm(arm_pos_from_mount - object_relative_pos):.4f}m")
@@ -576,13 +612,10 @@ class MotionPlannerPolicy(Policy):
                     action = {
                         'base_pose': base_pose.copy(),
                         'arm_pos': object_relative_pos,  # Position arm above object
-                        'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
-                        # 'arm_quat': np.array([0.71334776,  0.70182338, 0.03010257,  0.01993094]),
-                        # 'arm_quat': np.array([0.707,  0., 0.707,  0.]),
-                        # 'arm_quat': np.array([0.6204814, 0.3390396, 0.6206078, 0.3389705]),
+                        'arm_quat': adapted_grasp_quat,  # Adapted orientation: pointing down + aligned with object yaw
                         'gripper_pos': np.array([0.0])  # Keep gripper open while positioning
                     }
-                    print(f"Step 1: Positioning arm above object with open gripper")
+                    print(f"Step 1: Positioning arm above object with adapted grasp orientation")
                     # Move to next step after arm is positioned
                     if np.allclose(arm_pos_from_mount, object_relative_pos, atol=0.03):  # Tighter tolerance: 3cm
                         self.grasp_step = 1
@@ -595,7 +628,7 @@ class MotionPlannerPolicy(Policy):
                     action = {
                         'base_pose': base_pose.copy(),
                         'arm_pos': lower_pos,  # Lower the arm closer to object
-                        'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
+                        'arm_quat': adapted_grasp_quat,  # Maintain adapted orientation while lowering
                         'gripper_pos': np.array([0.0])  # Keep gripper open while lowering
                     }
                     print(f"Step 2: Lowering gripper for precise approach... target: {lower_pos[2]:.3f}, current: {arm_pos_from_mount[2]:.3f}")
@@ -610,7 +643,7 @@ class MotionPlannerPolicy(Policy):
                     action = {
                         'base_pose': base_pose.copy(),
                         'arm_pos': lower_pos,  # Maintain lowered position
-                        'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
+                        'arm_quat': adapted_grasp_quat,  # Maintain adapted orientation while grasping
                         'gripper_pos': np.array([1.0])  # Close gripper
                     }
                     print(f"Step 3: Closing gripper... current position: {gripper_pos[0]:.3f}")
@@ -647,7 +680,7 @@ class MotionPlannerPolicy(Policy):
                     action = {
                         'base_pose': base_pose.copy(),
                         'arm_pos': lifted_pos,  # Lift the object
-                        'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
+                        'arm_quat': adapted_grasp_quat,  # Maintain adapted orientation while lifting
                         'gripper_pos': np.array([1.0])  # Keep gripper closed
                     }
                     print(f"Step 4: Lifting object... target height: {lifted_pos[2]:.3f}, current: {arm_pos_from_mount[2]:.3f}")
@@ -905,10 +938,13 @@ class MotionPlannerPolicy(Policy):
         # Get all three cube positions from MuJoCo environment
         cubes = []
         cube_keys = []
+        cube_keys_quat = []
         for key in obs:
             print('key: ', key)
             if '0_pos' in key:
                 cube_keys.append(key)
+            if '0_quat' in key:
+                cube_keys_quat.append(key)
         for i in range(1, 4):
             # cube_key = f'cube{i}_pos'
             cube_key = cube_keys[i-1]
@@ -916,7 +952,8 @@ class MotionPlannerPolicy(Policy):
             
             if cube_key in obs:
                 cube_pos = obs[cube_key].copy()
-                cubes.append((cube_pos, i))
+                cube_quat = obs[cube_keys_quat[i-1]].copy()
+                cubes.append((cube_pos, cube_quat, i))
                 print(f"Detected cube {i} at position: {cube_pos}")
             else:
                 print(f"Warning: {cube_key} not found in observation")
@@ -925,13 +962,13 @@ class MotionPlannerPolicy(Policy):
             # Sort cubes by x position and select the one with smallest x value
             if select_object_id == -1:
                 cubes.sort(key=lambda x: x[0][0])  # Sort by x coordinate (first element of position)
-                target_cube_pos, target_cube_id = cubes[0]
-                detected_objects.append(target_cube_pos)
+                target_cube_pos, target_cube_quat, target_cube_id = cubes[0]
+                detected_objects.append([target_cube_pos, target_cube_quat, cube_keys[target_cube_id]])
                 print(f"Selected cube {target_cube_id} with smallest x value: {target_cube_pos[0]:.3f}")
 
             else:
-                target_cube_pos, target_cube_id = cubes[select_object_id]
-                detected_objects.append(target_cube_pos)
+                target_cube_pos, target_cube_quat, target_cube_id = cubes[select_object_id]
+                detected_objects.append([target_cube_pos, target_cube_quat, cube_keys[select_object_id]])
                 print(f"Selected cube {target_cube_id} based on user defined id")
         return detected_objects
 
