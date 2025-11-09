@@ -74,7 +74,6 @@ def run_episode(env, policy, writer=None, args=None):
 
             if writer is not None and should_save_episode(writer, args):
                 # Save to disk in background thread
-                import pdb; pdb.set_trace()
                 writer.flush_async()
 
             if args.sim and args.motion_planner:

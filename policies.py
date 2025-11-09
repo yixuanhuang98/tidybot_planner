@@ -608,14 +608,14 @@ class MotionPlannerPolicy(Policy):
                 # Create grasp orientation: pointing down (180° around X) + object's yaw
                 # This maintains top-down grasp while aligning with object's rotation
                 grasp_rot = R.from_euler('xz', [np.pi, object_yaw])  # 180° pitch (point down) + object yaw
-                adapted_grasp_quat = grasp_rot.as_quat()
+                self.adapted_grasp_quat = grasp_rot.as_quat()
                 
                 print(f"Base angle: {base_pose[2]:.3f} rad ({math.degrees(base_pose[2]):.1f} deg)")
                 print(f"Object global pos: {self.current_command.get('object_3d_pos', 'N/A')}")
                 print(f"Transformed object_relative_pos (from arm mount) = {object_relative_pos}")
                 print(f"Transformed object_relative_quat (in base frame) = {object_relative_quat}")
                 print(f"Object yaw: {object_yaw:.3f} rad ({math.degrees(object_yaw):.1f} deg)")
-                print(f"Adapted grasp quat: {adapted_grasp_quat} (default: [1,0,0,0])")
+                print(f"Adapted grasp quat: {self.adapted_grasp_quat} (default: [1,0,0,0])")
                 print(f"Current arm pos (from base center): {arm_pos}")
                 print(f"Current arm pos (from arm mount): {arm_pos_from_mount}")
                 print(f"Position error: {np.linalg.norm(arm_pos_from_mount - object_relative_pos):.4f}m")
@@ -626,7 +626,7 @@ class MotionPlannerPolicy(Policy):
                     action = {
                         'base_pose': base_pose.copy(),
                         'arm_pos': object_relative_pos,  # Position arm above object
-                        'arm_quat': adapted_grasp_quat,  # Adapted orientation: pointing down + aligned with object yaw
+                        'arm_quat': self.adapted_grasp_quat,  # Adapted orientation: pointing down + aligned with object yaw
                         'gripper_pos': np.array([0.0])  # Keep gripper open while positioning
                     }
                     print(f"Step 1: Positioning arm above object with adapted grasp orientation")
@@ -642,7 +642,7 @@ class MotionPlannerPolicy(Policy):
                     action = {
                         'base_pose': base_pose.copy(),
                         'arm_pos': lower_pos,  # Lower the arm closer to object
-                        'arm_quat': adapted_grasp_quat,  # Maintain adapted orientation while lowering
+                        'arm_quat': self.adapted_grasp_quat,  # Maintain adapted orientation while lowering
                         'gripper_pos': np.array([0.0])  # Keep gripper open while lowering
                     }
                     print(f"Step 2: Lowering gripper for precise approach... target: {lower_pos[2]:.3f}, current: {arm_pos_from_mount[2]:.3f}")
@@ -657,7 +657,7 @@ class MotionPlannerPolicy(Policy):
                     action = {
                         'base_pose': base_pose.copy(),
                         'arm_pos': lower_pos,  # Maintain lowered position
-                        'arm_quat': adapted_grasp_quat,  # Maintain adapted orientation while grasping
+                        'arm_quat': self.adapted_grasp_quat,  # Maintain adapted orientation while grasping
                         'gripper_pos': np.array([1.0])  # Close gripper
                     }
                     print(f"Step 3: Closing gripper... current position: {gripper_pos[0]:.3f}")
@@ -694,7 +694,7 @@ class MotionPlannerPolicy(Policy):
                     action = {
                         'base_pose': base_pose.copy(),
                         'arm_pos': lifted_pos,  # Lift the object
-                        'arm_quat': adapted_grasp_quat,  # Maintain adapted orientation while lifting
+                        'arm_quat': self.adapted_grasp_quat,  # Maintain adapted orientation while lifting
                         'gripper_pos': np.array([1.0])  # Keep gripper closed
                     }
                     print(f"Step 4: Lifting object... target height: {lifted_pos[2]:.3f}, current: {arm_pos_from_mount[2]:.3f}")
@@ -799,7 +799,7 @@ class MotionPlannerPolicy(Policy):
                     action = {
                         'base_pose': base_pose.copy(),
                         'arm_pos': target_relative_pos,  # Position arm above placement location
-                        'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
+                        'arm_quat': self.adapted_grasp_quat,  #np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
                         'gripper_pos': np.array([1.0])  # Keep gripper closed while positioning
                     }
                     print(f"Step 1: Positioning arm above placement location with closed gripper")
@@ -813,7 +813,7 @@ class MotionPlannerPolicy(Policy):
                     action = {
                         'base_pose': base_pose.copy(),
                         'arm_pos': target_relative_pos,  # Maintain arm position
-                        'arm_quat': np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
+                        'arm_quat': self.adapted_grasp_quat,  #np.array([1.0, 0.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
                         'gripper_pos': np.array([0.0])  # Open gripper
                     }
                     print(f"Step 2: Opening gripper... current position: {gripper_pos[0]:.3f}")
