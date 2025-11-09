@@ -63,6 +63,7 @@ def main(input_dir, output_path, args):
                 ]
 
             
+            
             if args.predicate:
                 predicates = []
                 state = 'moving'
@@ -90,7 +91,14 @@ def main(input_dir, output_path, args):
                 episode_group.create_dataset(f'obs/{k}', data=np.array(v))
             episode_group.create_dataset('actions', data=np.array(actions))
             if args.language:
-                episode_group.create_dataset('language', data="Pick the red block and place it in the +x direction by 0.5m.")
+                if len(reader.target_object_key) > 0:
+                    target_object_key = reader.target_object_key[0]
+                    target_object_key = target_object_key.split('_')[0]
+                    target_object_key = target_object_key.capitalize()
+                    import pdb; pdb.set_trace()
+                    episode_group.create_dataset('language', data=f"Pick the {target_object_key} block and place it in the +x direction by 0.5m.")
+                else:
+                    episode_group.create_dataset('language', data="Pick the target object and place it in the +x direction by 0.5m.")
             if args.predicate:
                 assert len(predicates) == len(reader.actions)
                 assert len(predicates) == len(reader.observations)

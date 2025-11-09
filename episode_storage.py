@@ -104,6 +104,7 @@ class EpisodeReader:
         self.timestamps = data['timestamps']
         self.observations = data['observations']
         self.actions = data['actions']
+        self.target_object_key = data['target_object_key']
         assert len(self.timestamps) > 0
         assert len(self.timestamps) == len(self.observations) == len(self.actions)
 
