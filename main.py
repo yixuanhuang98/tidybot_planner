@@ -48,6 +48,9 @@ def run_episode(env, policy, writer=None, args=None):
         # Get latest observation
         obs = env.get_obs()
 
+        if step_idx == 0:
+            target_object_key = policy.process_object_detection(obs)
+
         # Get action
         action = policy.step(obs)
         # print('action', action)

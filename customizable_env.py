@@ -122,6 +122,15 @@ class CustomizableMujocoSim(MujocoSim):
         # Reset simulation
         mujoco.mj_resetData(self.model, self.data)
 
+        # sample N objects without collisions
+        for _ in range(100):
+            # sample N objects without collisions
+            pos_x = np.random.uniform(0.4, 0.8, size=self.num_custom_objects)
+            pos_y = np.random.uniform(-0.3, 0.3, size=self.num_custom_objects)
+            if not self.check_collisions(pos_x, pos_y):
+                break
+                
+        
         # Randomize positions and orientations for all objects
         for i in range(self.num_custom_objects):
             obj_qpos = self.qpos_objects[i]
@@ -145,6 +154,13 @@ class CustomizableMujocoSim(MujocoSim):
         self.base_controller.reset()
         self.arm_controller.reset()
 
+    def check_collisions(self, pos_x, pos_y):
+        for i in range(self.num_custom_objects):
+            for j in range(i+1, self.num_custom_objects):
+                if np.linalg.norm(pos_x[i] - pos_x[j]) < 0.1 and np.linalg.norm(pos_y[i] - pos_y[j]) < 0.1:
+                    return True
+        return False
+    
     def launch(self):
         """Launch the simulation."""
         if self.show_viewer:

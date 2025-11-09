@@ -45,7 +45,7 @@ ROBOCASA_FRUITS = [
 ]
 
 EASYGRASP_OBJECTS = [
-    'bar_soap_0', 'boxed_drink_0', "cake_0"
+    'bar_soap_0', 'apple_0', "cake_0"
 ]
 
 # EASYGRASP_OBJECTS = [

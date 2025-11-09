@@ -377,7 +377,7 @@ class MotionPlannerPolicy(Policy):
         
         print(f'Motion planner policy initialized - ready to start automatically')
 
-    def reset(self):
+    def reset(self, select_object_id=-1):
         # Reset motion planning state
         self.state = 'idle'
         self.current_command = None
@@ -399,6 +399,21 @@ class MotionPlannerPolicy(Policy):
         
         print("Motion planner reset - starting episode automatically")
 
+    def process_object_detection(self, obs):
+        self.detected_objects = self.detect_objects_from_ground_truth(obs, select_object_id=1)
+        if self.detected_objects:
+            self.object_location = self.detected_objects[0][0]
+            self.target_object_key = self.detected_objects[0][2]
+            self.target_object_quat = self.detected_objects[0][1]
+            self.target_location = np.array([
+                self.object_location[0] + 0.5,  # 50cm in X direction
+                self.object_location[1],        # Same Y as object
+                self.object_location[2]         # Same Z as object (table height)
+            ])
+            return self.target_object_key
+        else:
+            raise Exception("No objects detected")
+    
     def step(self, obs):
         # Return no action if episode has ended
         if self.episode_ended:
@@ -423,18 +438,17 @@ class MotionPlannerPolicy(Policy):
         # State machine following controller.py pattern
         if self.state == 'idle':
             # Detect objects and plan new command
-            detected_objects = self.detect_objects_from_ground_truth(obs, select_object_id=1)
-            if detected_objects:
+            if self.detected_objects:
                 # Create pick command
-                self.object_location = detected_objects[0][0]
-                self.target_object_key = detected_objects[0][2]
-                self.target_object_quat = detected_objects[0][1]
-                # Set placement location relative to detected object (e.g., 50cm away)
-                self.target_location = np.array([
-                    self.object_location[0] + 0.5,  # 50cm in X direction
-                    self.object_location[1],        # Same Y as object
-                    self.object_location[2]         # Same Z as object (table height)
-                ])
+                # self.object_location = detected_objects[0][0]
+                # self.target_object_key = detected_objects[0][2]
+                # self.target_object_quat = detected_objects[0][1]
+                # # Set placement location relative to detected object (e.g., 50cm away)
+                # self.target_location = np.array([
+                #     self.object_location[0] + 0.5,  # 50cm in X direction
+                #     self.object_location[1],        # Same Y as object
+                #     self.object_location[2]         # Same Z as object (table height)
+                # ])
                 
                 pick_command = {
                     'primitive_name': 'pick',
@@ -959,6 +973,7 @@ class MotionPlannerPolicy(Policy):
                 print(f"Warning: {cube_key} not found in observation")
         
         if cubes:
+            select_object_id = np.random.randint(0, len(cubes))
             # Sort cubes by x position and select the one with smallest x value
             if select_object_id == -1:
                 cubes.sort(key=lambda x: x[0][0])  # Sort by x coordinate (first element of position)
