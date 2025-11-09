@@ -40,16 +40,18 @@ class EpisodeWriter:
         self.timestamps = []
         self.observations = []
         self.actions = []
+        self.target_object_key = []
 
         # Write to disk in separate thread to avoid blocking main thread
         self.flush_thread = None
 
-    def step(self, obs, action):
+    def step(self, obs, action, target_object_key):
         # if len(self.observations) == 0 and not np.allclose(obs['base_pose'], 0.0, atol=0.03):
         #     raise Exception('Initial base pose should be zero. Did the base get pushed?')
         self.timestamps.append(time.time())
         self.observations.append(obs)
         self.actions.append(action)
+        self.target_object_key.append(target_object_key)
 
     def __len__(self):
         return len(self.observations)
@@ -77,7 +79,7 @@ class EpisodeWriter:
 
         # Write rest of episode data
         with open(self.episode_dir / 'data.pkl', 'wb') as f:  # Note: Not secure. Only unpickle data you trust.
-            pickle.dump({'timestamps': self.timestamps, 'observations': self.observations, 'actions': self.actions}, f)
+            pickle.dump({'timestamps': self.timestamps, 'observations': self.observations, 'actions': self.actions, 'target_object_key': self.target_object_key}, f)
         num_episodes = len([child for child in self.output_dir.iterdir() if child.is_dir()])
         print(f'Saved episode to {self.episode_dir} ({num_episodes} total)')
 

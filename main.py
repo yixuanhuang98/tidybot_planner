@@ -65,7 +65,7 @@ def run_episode(env, policy, writer=None, args=None):
 
             if writer is not None and not episode_ended:
                 # Record executed action
-                writer.step(obs, action)
+                writer.step(obs, action, target_object_key)
 
         # Episode ended
         elif not episode_ended and action == 'end_episode':
@@ -74,6 +74,7 @@ def run_episode(env, policy, writer=None, args=None):
 
             if writer is not None and should_save_episode(writer, args):
                 # Save to disk in background thread
+                import pdb; pdb.set_trace()
                 writer.flush_async()
 
             if args.sim and args.motion_planner:
