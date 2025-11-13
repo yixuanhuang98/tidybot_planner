@@ -95,7 +95,6 @@ def main(input_dir, output_path, args):
                     target_object_key = reader.target_object_key[0]
                     target_object_key = target_object_key.split('_')[0]
                     target_object_key = target_object_key.capitalize()
-                    import pdb; pdb.set_trace()
                     episode_group.create_dataset('language', data=f"Pick the {target_object_key} block and place it in the +x direction by 0.5m.")
                 else:
                     episode_group.create_dataset('language', data="Pick the target object and place it in the +x direction by 0.5m.")
