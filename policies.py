@@ -349,7 +349,7 @@ class RemotePolicy(TeleopPolicy):
 
 # Motion Planner generated plan. 
 class MotionPlannerPolicy(Policy):
-    def __init__(self):
+    def __init__(self, custom_env=False):
         # Motion planning state - following controller.py pattern
         self.state = 'idle'  # States: idle, moving, manipulating, grasping
         self.current_command = None
@@ -374,6 +374,8 @@ class MotionPlannerPolicy(Policy):
         # Enable policy execution immediately (no web interface required)
         self.enabled = True
         self.episode_ended = False
+
+        self.custom_env = custom_env
         
         print(f'Motion planner policy initialized - ready to start automatically')
 
@@ -960,13 +962,18 @@ class MotionPlannerPolicy(Policy):
             if '0_quat' in key:
                 cube_keys_quat.append(key)
         for i in range(1, 4):
-            # cube_key = f'cube{i}_pos'
-            cube_key = cube_keys[i-1]
+            if self.custom_env:
+                cube_key = cube_keys[i-1]
+                cube_key_quat = cube_keys_quat[i-1]
+            else:
+                cube_key = f'cube{i}_pos'
+                cube_key_quat = f'cube{i}_quat'
+            
             print('obs keys: ', obs.keys())
             
             if cube_key in obs:
                 cube_pos = obs[cube_key].copy()
-                cube_quat = obs[cube_keys_quat[i-1]].copy()
+                cube_quat = obs[cube_key_quat].copy()
                 cubes.append((cube_pos, cube_quat, i))
                 print(f"Detected cube {i} at position: {cube_pos}")
             else:
@@ -978,12 +985,18 @@ class MotionPlannerPolicy(Policy):
             if select_object_id == -1:
                 cubes.sort(key=lambda x: x[0][0])  # Sort by x coordinate (first element of position)
                 target_cube_pos, target_cube_quat, target_cube_id = cubes[0]
-                detected_objects.append([target_cube_pos, target_cube_quat, cube_keys[target_cube_id]])
+                if self.custom_env:
+                    detected_objects.append([target_cube_pos, target_cube_quat, cube_keys[target_cube_id]])
+                else:
+                    detected_objects.append([target_cube_pos, target_cube_quat, f'cube{target_cube_id}_pos'])
                 print(f"Selected cube {target_cube_id} with smallest x value: {target_cube_pos[0]:.3f}")
 
             else:
                 target_cube_pos, target_cube_quat, target_cube_id = cubes[select_object_id]
-                detected_objects.append([target_cube_pos, target_cube_quat, cube_keys[select_object_id]])
+                if self.custom_env:
+                    detected_objects.append([target_cube_pos, target_cube_quat, cube_keys[target_cube_id]])
+                else:
+                    detected_objects.append([target_cube_pos, target_cube_quat, f'cube{target_cube_id}_pos'])
                 print(f"Selected cube {target_cube_id} based on user defined id")
         return detected_objects
 

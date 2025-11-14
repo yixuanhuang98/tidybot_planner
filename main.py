@@ -152,7 +152,7 @@ def main(args):
 
     # Create policy
     if args.motion_planner:
-        policy = MotionPlannerPolicy()
+        policy = MotionPlannerPolicy(custom_env=args.custom_env)
     elif args.teleop:
         policy = TeleopPolicy()
     else:
