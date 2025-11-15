@@ -43,7 +43,28 @@ def main(input_dir, output_path, args):
                     observations[k].append(v)
 
             # Extract actions
-            if args.quaternion:
+            if args.follow_obs:
+                actions = []
+                gripper_pos = 0.0
+                for i in range(len(reader.actions)):
+                    if i == len(reader.actions) - 1:
+                        actions.append(np.concatenate((
+                            reader.actions[i]['base_pose'],
+                            reader.actions[i]['arm_pos'],
+                            reader.actions[i]['arm_quat'],
+                            reader.actions[i]['gripper_pos'],
+                        )))
+                    else:
+                        # import pdb; pdb.set_trace()
+                        if reader.actions[i]['gripper_pos'] == 1.0:
+                            gripper_pos = 1.0
+                        actions.append(np.concatenate((
+                            observations['base_pose'][i+1],
+                            observations['arm_pos'][i+1],
+                            observations['arm_quat'][i+1],
+                            np.array([gripper_pos]),
+                        )))
+            elif args.quaternion:
                 actions = [
                     np.concatenate((
                         action['base_pose'],
@@ -89,6 +110,7 @@ def main(input_dir, output_path, args):
             episode_group = data_group.create_group(episode_key)
             for k, v in observations.items():
                 episode_group.create_dataset(f'obs/{k}', data=np.array(v))
+            print('actions', actions)
             episode_group.create_dataset('actions', data=np.array(actions))
             if args.language:
                 if len(reader.target_object_key) > 0:
@@ -110,6 +132,7 @@ if __name__ == '__main__':
     parser.add_argument('--language', type=bool, default=False)
     parser.add_argument('--predicate', type=bool, default=False)
     parser.add_argument('--quaternion', type=bool, default=False)
+    parser.add_argument('--follow_obs', type=bool, default=False)
     parser.add_argument('--max_episodes', type=int, default=1000000)
     args = parser.parse_args()
     main(args.input_dir, args.output_path, args = args)
