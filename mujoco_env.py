@@ -451,6 +451,7 @@ class MujocoEnv:
             'cube3_pos': self.shm_state.cube3_pos.copy(),
             'cube3_quat': cube3_quat,
         }
+        obs['arm_pos'][0] -= 0.12  # Base link offset
         if self.render_images:
             for shm_image in self.shm_images:
                 obs[f'{shm_image.camera_name}_image'] = shm_image.data.copy()

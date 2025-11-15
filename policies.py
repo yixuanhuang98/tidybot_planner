@@ -598,7 +598,7 @@ class MotionPlannerPolicy(Policy):
                 
                 # Transform arm_pos to be relative to arm mount for accurate comparison
                 # (arm_pos from obs is relative to base center, object_relative_pos is relative to arm mount)
-                arm_pos_from_mount = arm_pos - np.array([self.ARM_MOUNT_OFFSET[0], self.ARM_MOUNT_OFFSET[1], 0])
+                arm_pos_from_mount = arm_pos # - np.array([self.ARM_MOUNT_OFFSET[0], self.ARM_MOUNT_OFFSET[1], 0])
                 
                 # Compute adapted grasp quaternion based on object orientation
                 # Default: [1, 0, 0, 0] = gripper pointing down
@@ -794,7 +794,7 @@ class MotionPlannerPolicy(Policy):
                     ])
                 
                 # Transform arm_pos to be relative to arm mount for accurate comparison
-                arm_pos_from_mount = arm_pos - np.array([self.ARM_MOUNT_OFFSET[0], self.ARM_MOUNT_OFFSET[1], 0])
+                arm_pos_from_mount = arm_pos # - np.array([self.ARM_MOUNT_OFFSET[0], self.ARM_MOUNT_OFFSET[1], 0])
                 
                 print(f"Placing: target_relative_pos (from arm mount) = {target_relative_pos}")
                 print(f"Current arm pos (from base center): {arm_pos}")
@@ -921,7 +921,7 @@ class MotionPlannerPolicy(Policy):
             target_heading += frac * heading_diff
             print(f"Heading: current={base_pose[2]:.3f}, desired={desired_heading:.3f}, diff={heading_diff:.3f}, frac={frac:.3f}, target={target_heading:.3f}")
         
-        arm_pos_from_mount = obs['arm_pos'] - np.array([self.ARM_MOUNT_OFFSET[0], self.ARM_MOUNT_OFFSET[1], 0])
+        arm_pos_from_mount = obs['arm_pos'] # - np.array([self.ARM_MOUNT_OFFSET[0], self.ARM_MOUNT_OFFSET[1], 0])
         # Create action to move towards target
         action = {
             'base_pose': np.array([target_position[0], target_position[1], target_heading]),

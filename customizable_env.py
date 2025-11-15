@@ -520,6 +520,7 @@ class CustomizableMujocoEnv(MujocoEnv):
             'arm_quat': arm_quat,
             'gripper_pos': self.shm_state.gripper_pos.copy(),
         }
+        obs['arm_pos'][0] -= 0.12  # Base link offset
 
         # Add all object positions and quaternions
         for i, obj_name in enumerate(self.object_names):

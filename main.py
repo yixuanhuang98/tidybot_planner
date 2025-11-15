@@ -53,6 +53,8 @@ def run_episode(env, policy, writer=None, args=None):
 
         # Get action
         action = policy.step(obs)
+        # import pdb; pdb.set_trace()
+        # print('obs', [obs['base_pose'], obs['arm_pos'], obs['arm_quat'], obs['gripper_pos']])
         # print('action', action)
 
         # No action if teleop not enabled

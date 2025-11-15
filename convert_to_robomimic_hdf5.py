@@ -110,12 +110,13 @@ def main(input_dir, output_path, args):
             episode_group = data_group.create_group(episode_key)
             for k, v in observations.items():
                 episode_group.create_dataset(f'obs/{k}', data=np.array(v))
-            print('actions', actions)
+            # print('actions', actions)
             episode_group.create_dataset('actions', data=np.array(actions))
             if args.language:
                 if len(reader.target_object_key) > 0:
                     target_object_key = reader.target_object_key[0]
                     target_object_key = target_object_key.split('_')[0]
+                    print('target_object_key', target_object_key)
                     episode_group.create_dataset('language', data=f"Pick the {target_object_key} and place it in the +x direction by 0.5m.")
                 else:
                     episode_group.create_dataset('language', data="Pick the target object and place it in the +x direction by 0.5m.")
