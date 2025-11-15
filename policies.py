@@ -366,6 +366,8 @@ class MotionPlannerPolicy(Policy):
         self.lookahead_position = None
         self.position_tolerance = 0.005  # 0.5 cm (reduced from 1.5 cm)
         self.heading_tolerance = math.radians(2.1)  # 2.1 degrees
+
+        self.previous_gripper_pos = 0.0
         
         # Object and target locations (using ground truth from MuJoCo)
         self.object_location = None
@@ -673,6 +675,10 @@ class MotionPlannerPolicy(Policy):
                     # Check for successful grasp (multiple criteria)
                     gripper_closed_enough = gripper_pos[0] > 0.55  # Lower threshold (was 0.8)
                     gripper_progress = (gripper_pos[0] - self.initial_gripper_pos) > 0.3  # Made significant progress
+                    current_gripper_pos = gripper_pos[0]
+                    if (current_gripper_pos - self.previous_gripper_pos) < 0.01:
+                        gripper_progress = True
+                    
                     grasp_timeout = (time.time() - self.grasp_start_time) > 3.0  # 3 second timeout
                     
                     if gripper_closed_enough or gripper_progress or grasp_timeout:
@@ -725,6 +731,7 @@ class MotionPlannerPolicy(Policy):
                             self.episode_ended = True
                             self.state = 'idle'
                 
+                self.previous_gripper_pos = gripper_pos[0]
                 return action
             elif self.current_command['primitive_name'] == 'place':
                 # Position arm above placement location and open gripper
@@ -994,7 +1001,7 @@ class MotionPlannerPolicy(Policy):
             else:
                 target_cube_pos, target_cube_quat, target_cube_id = cubes[select_object_id]
                 if self.custom_env:
-                    detected_objects.append([target_cube_pos, target_cube_quat, cube_keys[target_cube_id]])
+                    detected_objects.append([target_cube_pos, target_cube_quat, cube_keys[target_cube_id - 1]])
                 else:
                     detected_objects.append([target_cube_pos, target_cube_quat, f'cube{target_cube_id}_pos'])
                 print(f"Selected cube {target_cube_id} based on user defined id")

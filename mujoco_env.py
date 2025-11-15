@@ -275,6 +275,9 @@ class MujocoSim:
             # Randomize position within a reasonable range around the table
             cube_qpos[0] += np.random.uniform(-0.1, 0.1, 1)  # X position
             cube_qpos[1] += np.random.uniform(-0.2, 0.2, 1)  # X position
+            
+            # cube_qpos[0] = np.random.uniform(-1, 1, 1)  # X position
+            # cube_qpos[1] = np.random.uniform(-1, 1, 1)  # X position
             # Keep Z position at table height (don't randomize vertical position)
             
             # Randomize orientation around Z-axis (yaw)
