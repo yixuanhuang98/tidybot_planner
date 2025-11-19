@@ -11,6 +11,7 @@ import h5py
 from constants import POLICY_CONTROL_PERIOD
 from episode_storage import EpisodeReader
 from mujoco_env import MujocoEnv
+from scipy.spatial.transform import Rotation
 
 def replay_episode(env, input_file, show_images=False, execute_obs=False):
     # Reset env
@@ -36,12 +37,20 @@ def replay_episode(env, input_file, show_images=False, execute_obs=False):
                 'arm_quat': observations['arm_quat'][step_idx],
                 'gripper_pos': observations['gripper_pos'][step_idx],
             }
-            action = {
-                'base_pose': actions[step_idx][:3],
-                'arm_pos': actions[step_idx][3:6],
-                'arm_quat': actions[step_idx][6:10],
-                'gripper_pos': actions[step_idx][10:11],
-            }
+            if len(actions[step_idx]) == 11:
+                action = {
+                    'base_pose': actions[step_idx][:3],
+                    'arm_pos': actions[step_idx][3:6],
+                    'arm_quat': actions[step_idx][6:10],
+                    'gripper_pos': actions[step_idx][10:11],
+                }
+            else:
+                action = {
+                    'base_pose': actions[step_idx][:3],
+                    'arm_pos': actions[step_idx][3:6],
+                    'arm_quat': Rotation.from_rotvec(actions[step_idx][6:9]).as_quat(),
+                    'gripper_pos': actions[step_idx][9:10],
+                }
             # Enforce desired control freq
             step_end_time = start_time + step_idx * POLICY_CONTROL_PERIOD
             while time.time() < step_end_time:

@@ -43,7 +43,24 @@ def main(input_dir, output_path, args):
                     observations[k].append(v)
 
             # Extract actions
-            if args.follow_obs:
+            if args.discrete_gripper:
+                actions = []
+                gripper_pos = 0.0
+                for i in range(len(reader.actions)):
+                    if i == len(reader.actions) - 1:
+                        gripper_pos = 0.0
+                    else:
+                        # import pdb; pdb.set_trace()
+                        if reader.actions[i]['gripper_pos'] == 1.0:
+                            gripper_pos = 1.0
+                    action = reader.actions[i]
+                    actions.append(np.concatenate((
+                        action['base_pose'],
+                        action['arm_pos'],
+                        Rotation.from_quat(action['arm_quat']).as_rotvec(),  # Convert quat to axis-angle
+                        np.array([gripper_pos]),
+                    )))
+            elif args.follow_obs:
                 actions = []
                 gripper_pos = 0.0
                 for i in range(len(reader.actions)):
@@ -117,9 +134,9 @@ def main(input_dir, output_path, args):
                     target_object_key = reader.target_object_key[0]
                     target_object_key = target_object_key.split('_')[0]
                     print('target_object_key', target_object_key)
-                    episode_group.create_dataset('language', data=f"Pick the {target_object_key} and place it in the +x direction by 0.5m.")
+                    episode_group.create_dataset('language', data=f"Pick the {target_object_key} and place it on a target.")
                 else:
-                    episode_group.create_dataset('language', data="Pick the target object and place it in the +x direction by 0.5m.")
+                    episode_group.create_dataset('language', data="Pick the target object and place it on a target.")
             if args.predicate:
                 assert len(predicates) == len(reader.actions)
                 assert len(predicates) == len(reader.observations)
@@ -134,6 +151,7 @@ if __name__ == '__main__':
     parser.add_argument('--predicate', type=bool, default=False)
     parser.add_argument('--quaternion', type=bool, default=False)
     parser.add_argument('--follow_obs', type=bool, default=False)
+    parser.add_argument('--discrete_gripper', type=bool, default=False)
     parser.add_argument('--max_episodes', type=int, default=1000000)
     args = parser.parse_args()
     main(args.input_dir, args.output_path, args = args)
