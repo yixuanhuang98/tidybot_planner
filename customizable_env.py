@@ -237,7 +237,7 @@ class CustomizableMujocoEnv(MujocoEnv):
         self.objects_config = objects or []
         self.render_images = render_images
         self.show_viewer = show_viewer
-        self.show_images = show_images
+        self.show_images = True # show_images
 
         # Generate custom scene XML
         self.mjcf_path = self._generate_scene_xml()
@@ -624,7 +624,7 @@ if __name__ == '__main__':
         floor_texture='light_wood_v3.png',
         objects=['apple.glb', 'banana.glb', 'tomato.glb'],
         show_viewer=True,
-        show_images=False
+        show_images=True
     )
 
     try:
