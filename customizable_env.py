@@ -140,11 +140,12 @@ class CustomizableMujocoSim(MujocoSim):
             # obj_qpos[1] += np.random.uniform(-0.2, 0.2)  # Y position
             # Keep Z position at table height (don't randomize vertical position)
 
-            obj_qpos[0] = pos_x[i]
-            obj_qpos[1] = pos_y[i]
+            # randomize position
+            # obj_qpos[0] = pos_x[i]
+            # obj_qpos[1] = pos_y[i]
             # Randomize orientation around Z-axis (yaw)
-            theta = np.random.uniform(-math.pi, math.pi)
-            # theta = 0
+            # theta = np.random.uniform(-math.pi, math.pi)
+            theta = 0
             obj_qpos[3:7] = np.array([math.cos(theta / 2), 0, 0, math.sin(theta / 2)])
 
             obj_name = self.custom_object_names[i] if i < len(self.custom_object_names) else f'object_{i}'

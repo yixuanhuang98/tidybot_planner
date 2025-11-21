@@ -987,7 +987,8 @@ class MotionPlannerPolicy(Policy):
                 print(f"Warning: {cube_key} not found in observation")
         
         if cubes:
-            select_object_id = np.random.randint(0, len(cubes))
+            # select_object_id = np.random.randint(0, len(cubes))
+            select_object_id = 0
             # Sort cubes by x position and select the one with smallest x value
             if select_object_id == -1:
                 cubes.sort(key=lambda x: x[0][0])  # Sort by x coordinate (first element of position)
