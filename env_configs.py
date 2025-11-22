@@ -45,7 +45,7 @@ ROBOCASA_FRUITS = [
 ]
 
 EASYGRASP_OBJECTS = [
-    'bar_soap_0', 'apple_0', "cake_0"
+    "cake_0", 'apple_0', 'bar_soap_0', 
 ]
 
 # EASYGRASP_OBJECTS = [
@@ -106,7 +106,8 @@ class EnvConfigBuilder:
             raise ValueError(f"Unknown category: {category}. Available: {list(categories.keys())}")
 
         available_objects = categories[category]
-        selected_objects = random.sample(available_objects, min(count, len(available_objects)))
+        selected_objects = available_objects
+        # selected_objects = random.sample(available_objects, min(count, len(available_objects)))
         self.config['objects'] = selected_objects
         return self
 
