@@ -141,11 +141,11 @@ class CustomizableMujocoSim(MujocoSim):
             # Keep Z position at table height (don't randomize vertical position)
 
             # randomize position
-            # obj_qpos[0] = pos_x[i]
-            # obj_qpos[1] = pos_y[i]
+            obj_qpos[0] = pos_x[i]
+            obj_qpos[1] = pos_y[i]
             # Randomize orientation around Z-axis (yaw)
-            # theta = np.random.uniform(-math.pi, math.pi)
-            theta = 0
+            theta = np.random.uniform(-math.pi, math.pi)
+            # theta = 0
             obj_qpos[3:7] = np.array([math.cos(theta / 2), 0, 0, math.sin(theta / 2)])
 
             obj_name = self.custom_object_names[i] if i < len(self.custom_object_names) else f'object_{i}'
@@ -304,17 +304,17 @@ class CustomizableMujocoEnv(MujocoEnv):
                      rgb1='0.3 0.5 0.7', rgb2='0 0 0', width='512', height='3072')
 
         # Floor texture
-        if self.floor_texture:
-            # Use absolute path for texture
-            texture_path = os.path.join(project_root, f'object_assets/use_textures/{self.floor_texture}')
-            ET.SubElement(asset, 'texture', type='2d', name='groundplane',
-                         file=texture_path)
-        else:
-            # Default checker texture
-            ET.SubElement(asset, 'texture', type='2d', name='groundplane',
-                         builtin='checker', mark='edge', rgb1='0.2 0.3 0.4',
-                         rgb2='0.1 0.2 0.3', markrgb='0.8 0.8 0.8',
-                         width='300', height='300')
+        # if self.floor_texture:
+        #     # Use absolute path for texture
+        #     texture_path = os.path.join(project_root, f'object_assets/use_textures/{self.floor_texture}')
+        #     ET.SubElement(asset, 'texture', type='2d', name='groundplane',
+        #                  file=texture_path)
+        # else:
+        # Default checker texture
+        ET.SubElement(asset, 'texture', type='2d', name='groundplane',
+                        builtin='checker', mark='edge', rgb1='0.2 0.3 0.4',
+                        rgb2='0.1 0.2 0.3', markrgb='0.8 0.8 0.8',
+                        width='300', height='300')
 
         ET.SubElement(asset, 'material', name='groundplane', texture='groundplane',
                      texuniform='true', texrepeat='5 5')

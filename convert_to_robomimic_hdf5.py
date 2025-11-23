@@ -35,7 +35,10 @@ def main(input_dir, output_path, args):
                 for k, v in obs.items():
                     if v.ndim == 3:
                         # Resize image
-                        v = cv.resize(v, (POLICY_IMAGE_WIDTH, POLICY_IMAGE_HEIGHT))
+                        if args.high_resolution:
+                            v = cv.resize(v, (224, 224))
+                        else:
+                            v = cv.resize(v, (POLICY_IMAGE_WIDTH, POLICY_IMAGE_HEIGHT))
 
                     # Append extracted observation
                     if k not in observations:
@@ -151,6 +154,7 @@ if __name__ == '__main__':
     parser.add_argument('--predicate', type=bool, default=False)
     parser.add_argument('--quaternion', type=bool, default=False)
     parser.add_argument('--follow_obs', type=bool, default=False)
+    parser.add_argument('--high_resolution', type=bool, default=False)
     parser.add_argument('--discrete_gripper', type=bool, default=False)
     parser.add_argument('--max_episodes', type=int, default=1000000)
     args = parser.parse_args()
