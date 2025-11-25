@@ -304,17 +304,17 @@ class CustomizableMujocoEnv(MujocoEnv):
                      rgb1='0.3 0.5 0.7', rgb2='0 0 0', width='512', height='3072')
 
         # Floor texture
-        # if self.floor_texture:
-        #     # Use absolute path for texture
-        #     texture_path = os.path.join(project_root, f'object_assets/use_textures/{self.floor_texture}')
-        #     ET.SubElement(asset, 'texture', type='2d', name='groundplane',
-        #                  file=texture_path)
-        # else:
+        if self.floor_texture:
+            # Use absolute path for texture
+            texture_path = os.path.join(project_root, f'object_assets/use_textures/{self.floor_texture}')
+            ET.SubElement(asset, 'texture', type='2d', name='groundplane',
+                         file=texture_path)
+        else:
         # Default checker texture
-        ET.SubElement(asset, 'texture', type='2d', name='groundplane',
-                        builtin='checker', mark='edge', rgb1='0.2 0.3 0.4',
-                        rgb2='0.1 0.2 0.3', markrgb='0.8 0.8 0.8',
-                        width='300', height='300')
+            ET.SubElement(asset, 'texture', type='2d', name='groundplane',
+                            builtin='checker', mark='edge', rgb1='0.2 0.3 0.4',
+                            rgb2='0.1 0.2 0.3', markrgb='0.8 0.8 0.8',
+                            width='300', height='300')
 
         ET.SubElement(asset, 'material', name='groundplane', texture='groundplane',
                      texuniform='true', texrepeat='5 5')
