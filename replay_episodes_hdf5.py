@@ -23,6 +23,7 @@ def replay_episode(env, input_file, show_images=False, execute_obs=False):
     input_file_group = input_file['data']
     for episode_key in input_file_group.keys():
         env.reset()
+        time.sleep(0.2)
         episode_group = input_file_group[episode_key]
         observations = episode_group['obs']
         actions = episode_group['actions']
@@ -30,7 +31,7 @@ def replay_episode(env, input_file, show_images=False, execute_obs=False):
         print(f'Loaded episode {episode_key} from {input_file}')
 
         start_time = time.time()
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         for step_idx in range(len(observations['base_pose'])):
             obs = {
                 'base_pose': observations['base_pose'][step_idx],

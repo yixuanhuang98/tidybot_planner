@@ -125,7 +125,8 @@ class BaseController:
         self.qpos[:] = np.zeros(3)
         # randomly initialize the base pose
         self.qpos[:2] = np.random.uniform(-0.05, 0.05, 2)
-        self.qpos[2] = np.random.uniform(-np.pi / 6, np.pi / 6)
+        # self.qpos[2] = np.random.uniform(-np.pi / 6, np.pi / 6)
+        self.qpos[2] = np.random.uniform(-np.pi, np.pi)
         self.ctrl[:] = self.qpos
 
         # Initialize OTG

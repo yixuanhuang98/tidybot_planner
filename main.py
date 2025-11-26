@@ -31,6 +31,7 @@ def run_episode(env, policy, writer=None, args=None):
     print('Resetting env...')
     env.reset()
     print('Env has been reset')
+    time.sleep(0.2)
 
     # Wait for user to press "Start episode"
     print('Press "Start episode" in the web app when ready to start new episode')
