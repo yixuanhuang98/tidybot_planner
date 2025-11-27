@@ -45,8 +45,16 @@ def run_episode(env, policy, writer=None, args=None):
         while time.time() < step_end_time:
             time.sleep(0.0001)
 
+        
         # Get latest observation
         obs = env.get_obs()
+        
+        target_object_key = 'cake'
+        for key in obs:
+            if target_object_key in key and 'pos' in key:
+                pos = obs[key]
+                if pos[2] > 0.1:
+                    break
 
         # Get action
         action = policy.step(obs)
