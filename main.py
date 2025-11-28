@@ -3,6 +3,7 @@
 
 import argparse
 import time
+import random
 from itertools import count
 from constants import POLICY_CONTROL_PERIOD
 from episode_storage import EpisodeWriter
@@ -34,11 +35,14 @@ def run_episode(env, policy, writer=None, args=None):
 
     # Wait for user to press "Start episode"
     print('Press "Start episode" in the web app when ready to start new episode')
-    policy.reset()
+    target_object_key = random.choice(['cake', 'apple', 'bar'])
+    policy.reset(target_object_key)
     print('Starting new episode')
+    print('Target object key: ', target_object_key)
 
     episode_ended = False
     start_time = time.time()
+    success = False
     for step_idx in count():
         # Enforce desired control freq
         step_end_time = start_time + step_idx * POLICY_CONTROL_PERIOD
@@ -49,12 +53,16 @@ def run_episode(env, policy, writer=None, args=None):
         # Get latest observation
         obs = env.get_obs()
         
-        target_object_key = 'cake'
+        
         for key in obs:
             if target_object_key in key and 'pos' in key:
                 pos = obs[key]
                 if pos[2] > 0.1:
+                    success = True
                     break
+        if success:
+            break
+                    
 
         # Get action
         action = policy.step(obs)
@@ -64,7 +72,7 @@ def run_episode(env, policy, writer=None, args=None):
         if action is None:
             continue
 
-        if step_idx > 300:
+        if step_idx > 50:
             break # avoid infinite loop
         
         # Execute valid action on robot

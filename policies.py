@@ -290,14 +290,14 @@ class RemotePolicy(TeleopPolicy):
         self.socket.connect(f'tcp://{POLICY_SERVER_HOST}:{POLICY_SERVER_PORT}')
         print(f'Connected to policy server at {POLICY_SERVER_HOST}:{POLICY_SERVER_PORT}')
 
-    def reset(self):
+    def reset(self, target_object_key):
         # Wait for user to signal that episode has started (or skip if web server disabled)
         super().reset()
 
         # Check connection to policy server and reset policy
         default_timeout = self.socket.getsockopt(zmq.RCVTIMEO)
         self.socket.setsockopt(zmq.RCVTIMEO, 1000)  # Temporarily set 1000 ms timeout
-        self.socket.send_pyobj({'reset': True})
+        self.socket.send_pyobj({'reset': True, 'target_object_key': target_object_key})
         try:
             self.socket.recv_pyobj()  # Note: Not secure. Only unpickle data you trust.
         except zmq.error.Again as e:
