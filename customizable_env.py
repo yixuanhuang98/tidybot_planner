@@ -125,9 +125,15 @@ class CustomizableMujocoSim(MujocoSim):
         # sample N objects without collisions
         for _ in range(100):
             # sample N objects without collisions
-            pos_x = np.random.uniform(0.4, 0.8, size=self.num_custom_objects)
-            pos_y = np.random.uniform(-0.3, 0.3, size=self.num_custom_objects)
-            if not self.check_collisions(pos_x, pos_y):
+            # pos_x = np.random.uniform(0.4, 0.8, size=self.num_custom_objects)
+            # pos_y = np.random.uniform(-0.3, 0.3, size=self.num_custom_objects)
+            # if not self.check_collisions(pos_x, pos_y):
+            #     break
+
+            # large range and no base collision
+            pos_x = np.random.uniform(-0.8, 0.8, size=self.num_custom_objects)
+            pos_y = np.random.uniform(-0.8, 0.8, size=self.num_custom_objects)
+            if not self.check_collisions(pos_x, pos_y) and not self.check_base_collision(pos_x, pos_y):
                 break
                 
         
@@ -161,6 +167,12 @@ class CustomizableMujocoSim(MujocoSim):
             for j in range(i+1, self.num_custom_objects):
                 if np.linalg.norm(pos_x[i] - pos_x[j]) < 0.1 and np.linalg.norm(pos_y[i] - pos_y[j]) < 0.1:
                     return True
+        return False
+    
+    def check_base_collision(self, pos_x, pos_y):
+        for i in range(self.num_custom_objects):
+            if np.linalg.norm(pos_x[i] - self.qpos_base[0]) < 0.3 and np.linalg.norm(pos_y[i] - self.qpos_base[1]) < 0.3:
+                return True
         return False
     
     def launch(self):
