@@ -23,15 +23,25 @@ def main(input_dir, output_path, args):
         data_group = f.create_group('data')
 
         # Iterate through episodes
-        for episode_idx, episode_dir in enumerate(tqdm(episode_dirs)):
-            # Load episode data
-            if episode_idx >= args.max_episodes:
-                break
+        for episode_idx in range(args.start_episode, args.start_episode + args.max_episodes):
+            episode_dir = episode_dirs[episode_idx]
             reader = EpisodeReader(episode_dir)
+
+            if args.navigation_only:
+                max_nav_steps = 0
+                for t in range(2, len(reader.observations)):
+                    if np.allclose(reader.observations[t]['base_pose'], reader.observations[t+1]['base_pose'], atol=0.003):
+                        max_nav_steps = t
+                        break
+                print('max_nav_steps', max_nav_steps)
 
             # Extract observations
             observations = {}
-            for obs in reader.observations:
+            for i in range(len(reader.observations)):
+                obs = reader.observations[i]
+                if args.navigation_only:
+                    if i > max_nav_steps:
+                        break
                 for k, v in obs.items():
                     if v.ndim == 3:
                         # Resize image
@@ -50,6 +60,9 @@ def main(input_dir, output_path, args):
                 actions = []
                 gripper_pos = 0.0
                 for i in range(len(reader.actions)):
+                    if args.navigation_only:
+                        if i > max_nav_steps:
+                            break
                     if i == len(reader.actions) - 1:
                         gripper_pos = 0.0
                     else:
@@ -137,7 +150,10 @@ def main(input_dir, output_path, args):
                     target_object_key = reader.target_object_key[0]
                     target_object_key = target_object_key.split('_')[0]
                     print('target_object_key', target_object_key)
-                    episode_group.create_dataset('language', data=f"Pick the {target_object_key} and place it on a target.")
+                    if args.navigation_only:
+                        episode_group.create_dataset('language', data=f"Navigate to the {target_object_key}")
+                    else:
+                        episode_group.create_dataset('language', data=f"Pick the {target_object_key} and place it on a target.")
                 else:
                     episode_group.create_dataset('language', data="Pick the target object and place it on a target.")
             if args.predicate:
@@ -157,5 +173,7 @@ if __name__ == '__main__':
     parser.add_argument('--high_resolution', type=bool, default=False)
     parser.add_argument('--discrete_gripper', type=bool, default=False)
     parser.add_argument('--max_episodes', type=int, default=1000000)
+    parser.add_argument('--start_episode', type=int, default=0)
+    parser.add_argument('--navigation_only', type=bool, default=False)
     args = parser.parse_args()
     main(args.input_dir, args.output_path, args = args)
