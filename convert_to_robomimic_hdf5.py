@@ -122,21 +122,21 @@ def main(input_dir, output_path, args):
                 predicates = []
                 state = 'moving'
                 for t in range(len(reader.observations)):
-                    # import pdb; pdb.set_trace()
                     if state == 'moving':
-                        if np.linalg.norm(reader.observations[t+1]['base_pose'] - reader.observations[t]['base_pose']) > 0.001:
-                            predicates.append("The target object in front of the base")
-                        else:
-                            predicates.append("The target object is in the gripper")
+                        if t >= 2 and np.allclose(reader.observations[t]['base_pose'], reader.observations[t+1]['base_pose'], atol=0.003):
+                            predicates.append("Grasp the target object.")
                             state = 'reach_moving_target'
+                        else:
+                            predicates.append("Navigate to the target object.")
+                            
                     elif state == 'reach_moving_target':
-                        if reader.observations[t]['gripper_pos'] > 0.3 and (reader.observations[t+1]['gripper_pos'] - reader.observations[t]['gripper_pos'] < 0.01):
-                            predicates.append("The target object is on the ground")
+                        if reader.observations[t]['gripper_pos'] > 0.1 and (reader.observations[t+1]['gripper_pos'] - reader.observations[t]['gripper_pos'] < 0.01):
+                            predicates.append("Place the target object.")
                             state = 'moving_object'
                         else:
-                            predicates.append("The target object is in the gripper")
+                            predicates.append("Grasp the target object.")
                     elif state == 'moving_object':
-                        predicates.append("The target object is on the ground")
+                        predicates.append("Place the target object.")
             
             # Write to HDF5
             episode_key = f'demo_{episode_idx}'
@@ -159,7 +159,7 @@ def main(input_dir, output_path, args):
             if args.predicate:
                 assert len(predicates) == len(reader.actions)
                 assert len(predicates) == len(reader.observations)
-                # print('actions', reader.actions)
+                # print('predicates', predicates)
                 episode_group.create_dataset('predicates', data=predicates)
 
 if __name__ == '__main__':
