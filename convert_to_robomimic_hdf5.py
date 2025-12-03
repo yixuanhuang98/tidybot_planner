@@ -24,6 +24,8 @@ def main(input_dir, output_path, args):
 
         # Iterate through episodes
         for episode_idx in range(args.start_episode, args.start_episode + args.max_episodes):
+            if episode_idx >= len(episode_dirs):
+                break
             episode_dir = episode_dirs[episode_idx]
             reader = EpisodeReader(episode_dir)
 
