@@ -123,7 +123,7 @@ class BaseController:
     def reset(self):
         # Initialize base at origin
         self.qpos[:] = np.zeros(3)
-        self.qpos[2] = np.random.uniform(-np.pi, np.pi)
+        self.qpos[2] = np.random.uniform(-np.pi/6, np.pi/6)
         self.ctrl[:] = self.qpos
 
         # Initialize OTG

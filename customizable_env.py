@@ -125,16 +125,16 @@ class CustomizableMujocoSim(MujocoSim):
         # sample N objects without collisions
         for _ in range(100):
             # sample N objects without collisions
-            # pos_x = np.random.uniform(0.4, 0.8, size=self.num_custom_objects)
-            # pos_y = np.random.uniform(-0.3, 0.3, size=self.num_custom_objects)
-            # if not self.check_collisions(pos_x, pos_y):
-            #     break
+            pos_x = np.random.uniform(0.4, 0.8, size=self.num_custom_objects)
+            pos_y = np.random.uniform(-0.3, 0.3, size=self.num_custom_objects)
+            if not self.check_collisions(pos_x, pos_y):
+                break
 
             # large range and no base collision
-            pos_x = np.random.uniform(-0.8, 0.8, size=self.num_custom_objects)
-            pos_y = np.random.uniform(-0.8, 0.8, size=self.num_custom_objects)
-            if not self.check_collisions(pos_x, pos_y) and not self.check_base_collision(pos_x, pos_y):
-                break
+            # pos_x = np.random.uniform(-0.8, 0.8, size=self.num_custom_objects)
+            # pos_y = np.random.uniform(-0.8, 0.8, size=self.num_custom_objects)
+            # if not self.check_collisions(pos_x, pos_y) and not self.check_base_collision(pos_x, pos_y):
+            #     break
                 
         
         # Randomize positions and orientations for all objects

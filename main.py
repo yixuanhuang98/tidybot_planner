@@ -60,8 +60,8 @@ def run_episode(env, policy, writer=None, args=None):
                 if pos[2] > 0.1:
                     success = True
                     break
-        if success:
-            break
+        # if success:
+        #     break
                     
 
         # Get action
