@@ -921,13 +921,17 @@ class MotionPlannerPolicy(Policy):
             target_heading += frac * heading_diff
             print(f"Heading: current={base_pose[2]:.3f}, desired={desired_heading:.3f}, diff={heading_diff:.3f}, frac={frac:.3f}, target={target_heading:.3f}")
         
-        arm_pos_from_mount = obs['arm_pos'] # - np.array([self.ARM_MOUNT_OFFSET[0], self.ARM_MOUNT_OFFSET[1], 0])
+        add_noise = True
+        if add_noise:
+            arm_pos_from_mount = obs['arm_pos'] + np.random.uniform(-0.2, 0.2, 3)
+        else:
+            arm_pos_from_mount = obs['arm_pos'] # - np.array([self.ARM_MOUNT_OFFSET[0], self.ARM_MOUNT_OFFSET[1], 0])
         # Create action to move towards target
         action = {
             'base_pose': np.array([target_position[0], target_position[1], target_heading]),
             'arm_pos': arm_pos_from_mount.copy(),
             'arm_quat': obs['arm_quat'].copy(),
-            'gripper_pos': obs['gripper_pos'].copy(),
+            'gripper_pos': 1.0 if add_noise else obs['gripper_pos'].copy(),
         }
         
         return action
