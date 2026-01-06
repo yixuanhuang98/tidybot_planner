@@ -377,7 +377,7 @@ class MotionPlannerPolicy(Policy):
         
         self.object_to_push_ids = [] #added for push primitive
         self.center_object_id = None #added for push primitive
-
+        self.gripper_push_open_pos = 0.6 #gripper open position for pushing
         # Enable policy execution immediately (no web interface required)
         self.enabled = True
         self.episode_ended = False
@@ -751,7 +751,7 @@ class MotionPlannerPolicy(Policy):
                         delattr(self, 'initial_gripper_pos')
                         print("Moving to lift phase!")
                         print(gripper_closed_enough, gripper_progress, grasp_timeout)
-                        breakpoint()
+                        #breakpoint()
                 
                 elif self.grasp_step == 3:
                     # Step 4: Lift object by 20cm from the grasping position
@@ -875,7 +875,7 @@ class MotionPlannerPolicy(Policy):
                     if np.allclose(arm_pos_from_mount, target_relative_pos, atol=0.05):  # 5cm tolerance
                         self.grasp_step = 1
                         print("Arm positioned above placement location, opening gripper")
-                    breakpoint()
+                    #breakpoint()
                 elif self.grasp_step == 1:
                     # Step 2: Open gripper to place object
                     action = {
@@ -999,7 +999,7 @@ class MotionPlannerPolicy(Policy):
                     print(f"Step 2: Lowering gripper for precise approach... target: {lower_pos[2]:.3f}, current: {arm_pos_from_mount[2]:.3f}")
                     if np.allclose(arm_pos_from_mount, lower_pos, atol=0.02):  # Very tight tolerance: 2cm
                         print(arm_pos_from_mount, lower_pos)
-                        breakpoint()
+                        #breakpoint()
                         self.grasp_step = 2
                         print("Gripper lowered to grasping position, closing gripper")
                 
@@ -1011,7 +1011,7 @@ class MotionPlannerPolicy(Policy):
                         'base_pose': base_pose.copy(),
                         'arm_pos': lower_pos,  # Maintain lowered position
                         'arm_quat': np.array([1.0, 1.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
-                        'gripper_pos': np.array([0.8])  # Close gripper
+                        'gripper_pos': np.array([self.gripper_push_open_pos ])  # Keep gripper slightly open for pushing
                     }
                     print(f"Step 3: Closing gripper... current position: {gripper_pos[0]:.3f}")
                     
@@ -1049,7 +1049,7 @@ class MotionPlannerPolicy(Policy):
                         'base_pose': base_pose.copy(),
                         'arm_pos': lifted_pos,  # Lift the object
                         'arm_quat': np.array([1.0, 1.0, 0.0, 0.0]),  # Inverted: gripper fingers pointing down toward ground
-                        'gripper_pos': np.array([0.6])  # Keep gripper closed
+                        'gripper_pos': np.array([self.gripper_push_open_pos ])  # Keep gripper slightly open for pushing
                     }
                     print(f"Step 4: Lifting arm end... target height: {lifted_pos[2]:.3f}, current: {arm_pos_from_mount[2]:.3f}")
                       # Keep target X, Y from target_location, but use object's Z height
