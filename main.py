@@ -56,7 +56,7 @@ def run_episode(env, policy, writer=None, args=None):
         if action is None:
             continue
 
-        if step_idx > 300:
+        if step_idx > 3000:
             break # avoid infinite loop
         
         # Execute valid action on robot
