@@ -117,12 +117,7 @@ class BaseController:
 
     def reset(self, base_reset_pose=None):
         # Initialize base at origin
-        if base_reset_pose is None:
-            self.qpos[:] = np.zeros(3)
-            self.qpos[:1] = np.random.uniform(-1, 1)
-            self.qpos[2] = np.random.uniform(-np.pi, np.pi)
-        else:
-            self.qpos[:] = base_reset_pose
+        self.qpos[:] = np.zeros(3)
         self.ctrl[:] = self.qpos
 
         # Initialize OTG
@@ -269,16 +264,50 @@ class MujocoSim:
         # Reset simulation
         mujoco.mj_resetData(self.model, self.data)
 
+        # Randomize cube sizes
+        cube_size_options = [0.005, 0.008, 0.01, 0.012, 0.015]  # ~10mm, 9mm, 11mm cubes
+        self.cube_sizes = []  # Store sizes for later use (e.g., Z position)
+        
+        for i in range(1, 4):  # cube1, cube2, cube3
+            try:
+                # Find body ID first, then get its geom (geoms don't have names in XML)
+                body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, f"cube{i}")
+                # Get the first geom attached to this body
+                geom_id = self.model.body_geomadr[body_id]
+                
+                random_size = np.random.choice(cube_size_options)
+                self.model.geom_size[geom_id] = [random_size, random_size, random_size]
+                self.cube_sizes.append(random_size)
+                print(f"Cube {i} size randomized to: {random_size*200:.0f}mm × {random_size*200:.0f}mm")
+                
+            except Exception as e:
+                print(f"Could not find geom for cube{i}: {e}")
+                self.cube_sizes.append(0.02)  # Default fallback
+
         # Randomize positions and orientations for all three cubes
         cubes = [self.qpos_cube1, self.qpos_cube2, self.qpos_cube3]
+        fixed_cube_pos_1 = 0#np.random.uniform(-0.2, 0.2)
+        cube_pos_0_list = []
         
         for i, cube_qpos in enumerate(cubes):
             # Randomize position within a reasonable range around the table
-            # cube_qpos[0] += np.random.uniform(-0.1, 0.1, 1)  # X position
-            # cube_qpos[1] += np.random.uniform(-0.2, 0.2, 1)  # Y position
-
-            cube_qpos[:2] = np.random.uniform(-0.7, 0.7, 2)
-            # Keep Z position at table height (don't randomize vertical position)
+            '''cube_qpos[0] += np.random.uniform(-0.1, 0.1, 1)  # X position
+            cube_qpos[1] += np.random.uniform(-0.2, 0.2, 1)  # Y position'''
+            cube_pos_0 = np.random.uniform(0.6, 1.5)
+            while cube_pos_0 in cube_pos_0_list:
+                cube_pos_0 = np.random.uniform(0.6, 1.5)
+            cube_qpos[0] = cube_pos_0
+            cube_qpos[1] = fixed_cube_pos_1 #np.random.uniform(-0.2, 0.2)
+            cube_pos_0_list.append(cube_qpos[0])
+            # if i == 0:
+            #     cube_qpos[1] = -0.2
+            # elif i == 1:
+            #     cube_qpos[1] = 0.2
+            # elif i == 2:
+            #     cube_qpos[1] = 0.6
+            
+            # Set Z position based on randomized cube size (Z = half-height so cube sits on ground)
+            cube_qpos[2] = self.cube_sizes[i]
             
             # Randomize orientation around Z-axis (yaw)
             theta = np.random.uniform(-math.pi, math.pi)
@@ -305,6 +334,7 @@ class MujocoSim:
         # Reset controllers
         self.base_controller.reset(base_reset_pose)
         self.arm_controller.reset()
+        #breakpoint()
 
     def control_callback(self, *_):
         # Check for new command
