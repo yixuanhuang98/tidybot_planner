@@ -264,9 +264,10 @@ class MujocoSim:
         # Reset simulation
         mujoco.mj_resetData(self.model, self.data)
 
-        # Randomize cube sizes
-        cube_size_options = [0.005, 0.008, 0.01, 0.012, 0.015]  # ~10mm, 9mm, 11mm cubes
+        # Randomize cube sizes and friction
+        cube_size_options = [0.02,0.02,0.02]#[0.012,0.016,0.02]#[0.005, 0.008, 0.01, 0.012, 0.015]  # ~10mm, 9mm, 11mm cubes
         self.cube_sizes = []  # Store sizes for later use (e.g., Z position)
+        self.cube_frictions = []  # Store friction values
         
         for i in range(1, 4):  # cube1, cube2, cube3
             try:
@@ -275,14 +276,30 @@ class MujocoSim:
                 # Get the first geom attached to this body
                 geom_id = self.model.body_geomadr[body_id]
                 
+                # Randomize size
                 random_size = np.random.choice(cube_size_options)
                 self.model.geom_size[geom_id] = [random_size, random_size, random_size]
                 self.cube_sizes.append(random_size)
-                print(f"Cube {i} size randomized to: {random_size*200:.0f}mm × {random_size*200:.0f}mm")
+                
+                # Randomize friction: [sliding, torsional, rolling]
+                # sliding friction: 0.3 (slippery) to 1.5 (sticky)
+                # torsional and rolling usually smaller
+                random_sliding_friction = np.random.uniform(1, 1)
+                random_torsional_friction = np.random.uniform(0.005,0.005)#(0.001, 0.01)
+                random_rolling_friction = np.random.uniform(0.0001,0.0001)#(0.001, 0.01)
+                self.model.geom_friction[geom_id] = [
+                    random_sliding_friction,
+                    random_torsional_friction,
+                    random_rolling_friction
+                ]
+                self.cube_frictions.append(random_sliding_friction)
+                
+                print(f"Cube {i}: size={random_size*200:.0f}mm, friction={random_sliding_friction:.2f}")
                 
             except Exception as e:
                 print(f"Could not find geom for cube{i}: {e}")
                 self.cube_sizes.append(0.02)  # Default fallback
+                self.cube_frictions.append(1.0)  # Default friction
 
         # Randomize positions and orientations for all three cubes
         cubes = [self.qpos_cube1, self.qpos_cube2, self.qpos_cube3]
@@ -291,20 +308,15 @@ class MujocoSim:
         
         for i, cube_qpos in enumerate(cubes):
             # Randomize position within a reasonable range around the table
-            '''cube_qpos[0] += np.random.uniform(-0.1, 0.1, 1)  # X position
-            cube_qpos[1] += np.random.uniform(-0.2, 0.2, 1)  # Y position'''
-            cube_pos_0 = np.random.uniform(0.6, 1.5)
+            cube_qpos[0] += np.random.uniform(-0.3-i*0.2, 0.3+i*0.2, 1)  # X position
+            cube_qpos[1] += np.random.uniform(-0.3-i*0.2, 0.3+i*0.2, 1)  # Y position
+
+            '''cube_pos_0 = np.random.uniform(0.6, 1.5)
             while cube_pos_0 in cube_pos_0_list:
                 cube_pos_0 = np.random.uniform(0.6, 1.5)
             cube_qpos[0] = cube_pos_0
             cube_qpos[1] = fixed_cube_pos_1 #np.random.uniform(-0.2, 0.2)
-            cube_pos_0_list.append(cube_qpos[0])
-            # if i == 0:
-            #     cube_qpos[1] = -0.2
-            # elif i == 1:
-            #     cube_qpos[1] = 0.2
-            # elif i == 2:
-            #     cube_qpos[1] = 0.6
+            cube_pos_0_list.append(cube_qpos[0])'''#for a straight line cube placement
             
             # Set Z position based on randomized cube size (Z = half-height so cube sits on ground)
             cube_qpos[2] = self.cube_sizes[i]

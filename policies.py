@@ -349,6 +349,8 @@ class RemotePolicy(TeleopPolicy):
 
 # Motion Planner generated plan. 
 class MotionPlannerPolicy(Policy):
+    total_success = 0
+    total_failure = 0
     def __init__(self):
         # Motion planning state - following controller.py pattern
         self.state = 'idle'  # States: idle, moving, manipulating, grasping
@@ -381,6 +383,7 @@ class MotionPlannerPolicy(Policy):
         # Enable policy execution immediately (no web interface required)
         self.enabled = True
         self.episode_ended = False
+        self.task_success = False
         
         print(f'Motion planner policy initialized - ready to start automatically')
 
@@ -394,9 +397,9 @@ class MotionPlannerPolicy(Policy):
         self.lookahead_position = None
         self.episode_ended = False
         self.grasp_step = 0  # Reset grasping step
+        self.task_success = False
         #added for push queue
         self.desired_arm_pos = None # Reset desired arm position
-        
         self.object_to_push_ids = [] #reset for push queue
         self.center_object_id = None #reset for center object
         # Clean up any grasp tracking variables
@@ -553,6 +556,12 @@ class MotionPlannerPolicy(Policy):
                 #all objects pushed, end episode
                 #added for push queue
                 print("All objects pushed, ending episode")
+                self.task_success = self.check_task_success(obs)
+                if self.task_success:
+                    self.total_success += 1
+                else:
+                    self.total_failure += 1
+                #breakpoint()
                 self.episode_ended = True
                 return None 
         elif self.state == 'moving':
@@ -1062,7 +1071,6 @@ class MotionPlannerPolicy(Policy):
                     
                     if np.allclose(arm_pos_from_mount, lifted_pos, atol=0.01):  # 5cm tolerance
                         print("Arm end is ready! Now moving to center location.", lifted_pos[2], self.target_location[2])
-                        #breakpoint()  
                         # Just move base to target location (no placing required) and start moving
                         movebtwpush_command = {
                             'primitive_name': 'movebtwpush',
@@ -1084,7 +1092,6 @@ class MotionPlannerPolicy(Policy):
                             print("Failed to build movebtwpush command")
                             self.episode_ended = True
                             self.state = 'idle'
-
                         # Create place command to move to placement location (already set dynamically)
                         '''place_command = {
                             'primitive_name': 'place',
@@ -1373,6 +1380,42 @@ class MotionPlannerPolicy(Policy):
             
         return {'waypoints': waypoints, 'target_ee_pos': target_ee_pos}
 
+    def check_task_success(self, obs):
+        """Check if cubes are in desired positions"""
+        cube1_pos = obs['cube1_pos']
+        cube2_pos = obs['cube2_pos']
+        cube3_pos = obs['cube3_pos']
+        
+        # Option 1: Check if all cubes are close together (pushed to same area)
+        dist_12 = np.linalg.norm(cube1_pos[:2] - cube2_pos[:2])
+        dist_23 = np.linalg.norm(cube2_pos[:2] - cube3_pos[:2])
+        dist_13 = np.linalg.norm(cube1_pos[:2] - cube3_pos[:2])
+        
+        MAX_DISTANCE = 0.12  # 10cm - cubes should be within this distance
+        all_close = (dist_12 < MAX_DISTANCE and 
+                    dist_23 < MAX_DISTANCE and 
+                    dist_13 < MAX_DISTANCE)
+        print(f"Distances: 1-2={dist_12:.3f}m, 2-3={dist_23:.3f}m, 1-3={dist_13:.3f}m")
+
+        if all_close:
+            print(f"✓ Success! Cubes are close together")
+            return True
+        
+        return False
+    
+    def print_final_stats(cls):
+        """Print final statistics after all episodes"""
+        total = cls.total_success + cls.total_failure
+        rate = cls.total_success / total * 100 if total > 0 else 0
+        print("\n" + "="*50)
+        print("📊 FINAL RESULTS")
+        print("="*50)
+        print(f"Total episodes: {total}")
+        print(f"Success: {cls.total_success}")
+        print(f"Failed: {cls.total_failure}")
+        print(f"Success rate: {rate:.1f}%")
+        print("="*50 + "\n")
+    
 
 if __name__ == '__main__':
     # WebServer(Queue()).run(); time.sleep(1000)

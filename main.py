@@ -112,11 +112,16 @@ def main(args):
     else:
         policy = RemotePolicy(enable_web_server=not args.sim)
 
+    NUM_EPISODES = 100  # Change this to run more/fewer episodes
     try:
-        while True:
+        for episode in range(NUM_EPISODES):
+            print(f"\n{'='*50}")
+            print(f"EPISODE {episode + 1}/{NUM_EPISODES}")
+            print(f"{'='*50}")
             writer = EpisodeWriter(args.output_dir) if args.save else None
             run_episode(env, policy, writer, args)
     finally:
+        policy.print_final_stats()
         env.close()
 
 if __name__ == '__main__':
