@@ -6,7 +6,7 @@ import time
 from itertools import count
 from constants import POLICY_CONTROL_PERIOD
 from episode_storage import EpisodeWriter
-from policies import TeleopPolicy, RemotePolicy, MotionPlannerPolicy
+from policies import TeleopPolicy, RemotePolicy, MotionPlannerPolicy, ResidualPolicy
 
 def should_save_episode(writer, args):
     if len(writer) == 0:
@@ -26,15 +26,20 @@ def should_save_episode(writer, args):
                 return False
             print('Invalid response')
 
-def run_episode(env, policy, writer=None, args=None):
+def run_episode(env, policy, writer=None, args=None, planner=None):
     # Reset the env
     print('Resetting env...')
     env.reset()
     print('Env has been reset')
 
+    if writer is not None and args is not None and args.sim and hasattr(env, 'get_sim_state'):
+        writer.set_initial_sim_state(env.get_sim_state())
+
     # Wait for user to press "Start episode"
     print('Press "Start episode" in the web app when ready to start new episode')
     policy.reset()
+    if planner is not None:
+        planner.reset()
     print('Starting new episode')
 
     episode_ended = False
@@ -48,9 +53,13 @@ def run_episode(env, policy, writer=None, args=None):
         # Get latest observation
         obs = env.get_obs()
 
-        # Get action
+        # Get action from main policy (teleop or other)
         action = policy.step(obs)
         # print('action', action)
+        # Get planning action if in residual mode
+        planning_action = None
+        if planner is not None and isinstance(action, dict):
+            planning_action = planner._step(obs)
 
         # No action if teleop not enabled
         if action is None:
@@ -65,7 +74,7 @@ def run_episode(env, policy, writer=None, args=None):
 
             if writer is not None and not episode_ended:
                 # Record executed action
-                writer.step(obs, action)
+                writer.step(obs, action, planning_action)
 
         # Episode ended
         elif not episode_ended and action == 'end_episode':
@@ -77,7 +86,7 @@ def run_episode(env, policy, writer=None, args=None):
                 # Save to disk in background thread
                 writer.flush_async()
 
-            if args.sim and args.motion_planner:
+            if args.sim and (args.motion_planner or args.residual_infer):
                 print('Episode ended')
                 break
             else:
@@ -96,7 +105,7 @@ def main(args):
     # Create env
     if args.sim:
         from mujoco_env import MujocoEnv
-        if args.teleop:
+        if args.teleop or args.residual:
             env = MujocoEnv(show_images=True)
         else:
             env = MujocoEnv()
@@ -107,21 +116,27 @@ def main(args):
     # Create policy
     if args.motion_planner:
         policy = MotionPlannerPolicy()
-    elif args.teleop:
+    elif args.residual_infer:
+        policy = ResidualPolicy(enable_web_server=not args.sim)
+    elif args.teleop or args.residual:
         policy = TeleopPolicy()
     else:
         policy = RemotePolicy(enable_web_server=not args.sim)
 
-    NUM_EPISODES = 100  # Change this to run more/fewer episodes
+    if args.residual:
+        print(f"\n{'='*50}"+'\nRunning residual mode\n'+f"{'='*50}\n")
+        planner = MotionPlannerPolicy()
+    else:
+        planner = None
+    NUM_EPISODES = 1 # Change this to run more/fewer episodes
     try:
         for episode in range(NUM_EPISODES):
-            print(f"\n{'='*50}")
-            print(f"EPISODE {episode + 1}/{NUM_EPISODES}")
-            print(f"{'='*50}")
-            writer = EpisodeWriter(args.output_dir) if args.save else None
-            run_episode(env, policy, writer, args)
+            print(f"\n{'='*50}\nEPISODE {episode + 1}/{NUM_EPISODES}\n{'='*50}")
+            writer = EpisodeWriter(args.output_dir, save_planning_action=args.residual) if args.save else None
+            run_episode(env, policy, writer, args, planner=planner)
     finally:
-        policy.print_final_stats()
+        if args.motion_planner:
+            policy.print_final_stats()
         env.close()
 
 if __name__ == '__main__':
@@ -129,6 +144,8 @@ if __name__ == '__main__':
     parser.add_argument('--sim', action='store_true')
     parser.add_argument('--teleop', action='store_true')
     parser.add_argument('--motion_planner', action='store_true')
+    parser.add_argument('--residual', action='store_true', help='Residual data collection mode: teleop + record planner output')
+    parser.add_argument('--residual_infer', action='store_true', help='Residual inference mode: planner + diffusion delta')
     parser.add_argument('--save', action='store_true')
     parser.add_argument('--output-dir', default='data/demos')
     main(parser.parse_args())

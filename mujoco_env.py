@@ -209,11 +209,12 @@ class ArmController:
             self.ctrl[:] = self.otg_out.new_position
 
 class MujocoSim:
-    def __init__(self, mjcf_path, command_queue, shm_state, show_viewer=True):
+    def __init__(self, mjcf_path, command_queue, response_queue, shm_state, show_viewer=True):
         self.model = mujoco.MjModel.from_xml_path(mjcf_path)
         self.data = mujoco.MjData(self.model)
         self.command_queue = command_queue
         self.show_viewer = show_viewer
+        self.response_queue = response_queue
 
         # Enable gravity compensation for everything except objects
         self.model.body_gravcomp[:] = 1.0
@@ -265,7 +266,7 @@ class MujocoSim:
         mujoco.mj_resetData(self.model, self.data)
 
         # Randomize cube sizes and friction
-        cube_size_options = [0.02,0.02,0.02]#[0.012,0.016,0.02]#[0.005, 0.008, 0.01, 0.012, 0.015]  # ~10mm, 9mm, 11mm cubes
+        cube_size_options = [0.013,0.018,0.022] #[0.02,0.02,0.02] # ~10mm, 9mm, 11mm cubes
         self.cube_sizes = []  # Store sizes for later use (e.g., Z position)
         self.cube_frictions = []  # Store friction values
         
@@ -284,7 +285,7 @@ class MujocoSim:
                 # Randomize friction: [sliding, torsional, rolling]
                 # sliding friction: 0.3 (slippery) to 1.5 (sticky)
                 # torsional and rolling usually smaller
-                random_sliding_friction = np.random.uniform(1, 1)
+                random_sliding_friction = np.random.uniform(1, 1.4)
                 random_torsional_friction = np.random.uniform(0.005,0.005)#(0.001, 0.01)
                 random_rolling_friction = np.random.uniform(0.0001,0.0001)#(0.001, 0.01)
                 self.model.geom_friction[geom_id] = [
@@ -303,13 +304,25 @@ class MujocoSim:
 
         # Randomize positions and orientations for all three cubes
         cubes = [self.qpos_cube1, self.qpos_cube2, self.qpos_cube3]
-        fixed_cube_pos_1 = 0#np.random.uniform(-0.2, 0.2)
-        cube_pos_0_list = []
+        center, left, right = cubes[0], cubes[1], cubes[2]
+
+        # 1)center cube（cube1）：
+        center[0] = np.random.uniform(0.5, 0.7)    # x 
+        center[1] = np.random.uniform(-0.4, 0.4)   # y 
+        # 2) left / small-x cube（cube2）：
+        left[0] = np.random.uniform(0.2, 0.4)
+        left[1] = np.random.uniform(-0.4, 0.4)
+        # 3) right / large-x cube（cube3）：
+        right[0] = np.random.uniform(0.8, 1.0)
+        right[1] = np.random.uniform(-0.4, 0.4)
+        '''fixed_cube_pos_1 = 0#np.random.uniform(-0.2, 0.2)
+        cube_pos_0_list = []'''
         
         for i, cube_qpos in enumerate(cubes):
-            # Randomize position within a reasonable range around the table
+
+            '''# Randomize position within a reasonable range around the table
             cube_qpos[0] += np.random.uniform(-0.3-i*0.2, 0.3+i*0.2, 1)  # X position
-            cube_qpos[1] += np.random.uniform(-0.3-i*0.2, 0.3+i*0.2, 1)  # Y position
+            cube_qpos[1] += np.random.uniform(-0.3-i*0.2, 0.3+i*0.2, 1)  # Y position'''
 
             '''cube_pos_0 = np.random.uniform(0.6, 1.5)
             while cube_pos_0 in cube_pos_0_list:
@@ -346,11 +359,45 @@ class MujocoSim:
         # Reset controllers
         self.base_controller.reset(base_reset_pose)
         self.arm_controller.reset()
-        #breakpoint()
+        
 
+    def get_sim_state(self):
+        return {
+            'qpos': self.data.qpos.copy(),
+            'qvel': self.data.qvel.copy(),
+            'cube_sizes': np.array(self.cube_sizes, dtype=np.float64),
+            'cube_frictions': np.array(self.cube_frictions, dtype=np.float64),
+        }
+
+    def set_sim_state(self, state):
+        self.data.qpos[:] = state['qpos']
+        self.data.qvel[:] = state['qvel']
+
+        for i in range(1, 4):
+            body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, f"cube{i}")
+            geom_id = self.model.body_geomadr[body_id]
+            size = float(state['cube_sizes'][i - 1])
+            fric = float(state['cube_frictions'][i - 1])
+            self.model.geom_size[geom_id] = [size, size, size]
+            self.model.geom_friction[geom_id] = [fric, 0.005, 0.0001]
+
+        self.cube_sizes = list(state['cube_sizes'])
+        self.cube_frictions = list(state['cube_frictions'])
+        mujoco.mj_forward(self.model, self.data)
+        
     def control_callback(self, *_):
         # Check for new command
         command = None if self.command_queue.empty() else self.command_queue.get()
+
+        if isinstance(command, dict):
+            if command.get('cmd') == 'get_state':
+                self.response_queue.put(self.get_sim_state())
+                command = None
+            elif command.get('cmd') == 'set_state':
+                self.set_sim_state(command['state'])
+                self.response_queue.put({'ok': True})
+                command = None
+
         if command == 'reset':
             self.reset()
 
@@ -408,6 +455,7 @@ class MujocoEnv:
         self.show_viewer = show_viewer
         self.show_images = show_images
         self.command_queue = mp.Queue(1)
+        self.response_queue = mp.Queue(1)
 
         # Shared memory for state observations
         self.shm_state = ShmState()
@@ -430,7 +478,12 @@ class MujocoEnv:
 
     def physics_loop(self):
         # Create sim
-        sim = MujocoSim(self.mjcf_path, self.command_queue, self.shm_state, show_viewer=self.show_viewer)
+        sim = MujocoSim(
+            self.mjcf_path, 
+            self.command_queue, 
+            self.response_queue,
+            self.shm_state, 
+            show_viewer=self.show_viewer)
 
         # Start render loop
         if self.render_images:
@@ -515,6 +568,15 @@ class MujocoEnv:
     def step(self, action):
         # Note: We intentionally do not return obs here to prevent the policy from using outdated data
         self.command_queue.put(action)
+
+    def get_sim_state(self):
+        self.command_queue.put({'cmd': 'get_state'})
+        return self.response_queue.get()
+
+    def set_sim_state(self, state):
+        self.command_queue.put({'cmd': 'set_state', 'state': state})
+        _ = self.response_queue.get()
+
 
     def close(self):
         self.shm_state.close()

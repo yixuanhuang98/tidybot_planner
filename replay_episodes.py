@@ -18,6 +18,9 @@ def replay_episode(env, episode_dir, show_images=False, execute_obs=False):
     reader = EpisodeReader(episode_dir)
     print(f'Loaded episode from {episode_dir}')
 
+    if hasattr(reader, 'initial_sim_state') and reader.initial_sim_state is not None and hasattr(env, 'set_sim_state'):
+        env.set_sim_state(reader.initial_sim_state)
+
     start_time = time.time()
     for step_idx, (obs, action) in enumerate(zip(reader.observations, reader.actions)):
         # Enforce desired control freq

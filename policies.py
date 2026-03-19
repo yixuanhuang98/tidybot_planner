@@ -1417,6 +1417,95 @@ class MotionPlannerPolicy(Policy):
         print("="*50 + "\n")
     
 
+class ResidualPolicy(RemotePolicy):
+    """
+    Residual learning inference policy.
+    Combines MotionPlanner output (planning_action) with Diffusion Policy output (delta_action).
+
+    final_action = planning_action + delta_action
+    - Non-rotation: direct addition
+    - Rotation: R_final = R_delta * R_plan (proper rotation composition)
+    """
+    def __init__(self, enable_web_server=True):
+        super().__init__(enable_web_server=enable_web_server)
+        self.planner = MotionPlannerPolicy()
+
+    def reset(self):
+        super().reset()
+        self.planner.reset()
+
+    def _step(self, obs):
+        # 1. Get planning action from planner
+        planning_action = self.planner.step(obs)
+
+        # propagate episode end signal from planner to teleop
+        if planning_action == 'end_episode':
+            self.episode_ended = True
+            return 'end_episode'
+
+        if planning_action is None:
+            return None
+
+        # 2. Add planning_action directly into obs so PolicyWrapper history frames
+        #    all contain planning_action (required by DiffusionPolicy._convert_obs)
+        obs['planning_action'] = self._action_dict_to_array(planning_action)
+
+        # 3. Send obs to diffusion policy server, get delta_action sequence (list of dicts)
+        delta_action = super()._step(obs)
+
+        # If delta not ready yet (e.g. act_queue warming up), fall back to planner action
+        if delta_action is None:
+            return planning_action
+#        else:
+#            print("Delta sequence is shown, not just planner action")
+#            breakpoint()
+        # 4. Combine each delta with planning: final = planning + delta
+        return self._combine_actions(planning_action, delta_action)
+
+    def _action_dict_to_array(self, action):
+        """Convert action dict to 13D numpy array (axis_angle)"""
+        # Convert quaternion to rotation matrix
+        rot_matrix = R.from_quat(action['arm_quat']).as_matrix()  # 3x3 rotation matrix
+        # Extract 2x3 submatrix for 6D rotation vector
+        rot_6d = rot_matrix[:2, :].reshape(-1)  # 6D rotation vector
+        
+        return np.concatenate([
+            action['base_pose'],                         # 3
+            action['arm_pos'],                           # 3
+            rot_6d, # 6
+            action['gripper_pos'],                       # 1
+        ])                                              # = 13
+
+    def _combine_actions(self, planning_action, delta_action):
+        """
+        Combine planning_action and delta_action into final_action.
+        - Non-rotation parts: direct addition
+        - Rotation: R_final = R_delta * R_plan
+        """
+        # Non-rotation: direct addition
+        final_base_pose = planning_action['base_pose'] + delta_action['base_pose']
+        final_arm_pos = planning_action['arm_pos'] + delta_action['arm_pos']
+        final_gripper = np.clip(
+            planning_action['gripper_pos'] + delta_action['gripper_pos'],
+            0.0, 1.0
+        )
+
+        # Rotation: R_final = R_delta * R_plan
+        R_plan = R.from_quat(planning_action['arm_quat'])
+        R_delta = R.from_quat(delta_action['arm_quat'])
+        R_final = R_delta * R_plan
+        final_quat = R_final.as_quat()  # [x, y, z, w]
+        if final_quat[3] < 0.0:
+            np.negative(final_quat, out=final_quat)
+
+        return {
+            'base_pose': final_base_pose,
+            'arm_pos': final_arm_pos,
+            'arm_quat': final_quat,
+            'gripper_pos': final_gripper,
+        }
+
+
 if __name__ == '__main__':
     # WebServer(Queue()).run(); time.sleep(1000)
     # WebXRListener(); time.sleep(1000)
