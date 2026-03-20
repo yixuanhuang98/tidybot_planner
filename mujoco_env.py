@@ -266,7 +266,7 @@ class MujocoSim:
         mujoco.mj_resetData(self.model, self.data)
 
         # Randomize cube sizes and friction
-        cube_size_options = [0.013,0.018,0.022] #[0.02,0.02,0.02] # ~10mm, 9mm, 11mm cubes
+        cube_size_options = [0.02,0.02,0.02]# [0.013,0.018,0.022]  # ~10mm, 9mm, 11mm cubes
         self.cube_sizes = []  # Store sizes for later use (e.g., Z position)
         self.cube_frictions = []  # Store friction values
         
@@ -285,7 +285,7 @@ class MujocoSim:
                 # Randomize friction: [sliding, torsional, rolling]
                 # sliding friction: 0.3 (slippery) to 1.5 (sticky)
                 # torsional and rolling usually smaller
-                random_sliding_friction = np.random.uniform(1, 1.4)
+                random_sliding_friction = np.random.uniform(1, 1)
                 random_torsional_friction = np.random.uniform(0.005,0.005)#(0.001, 0.01)
                 random_rolling_friction = np.random.uniform(0.0001,0.0001)#(0.001, 0.01)
                 self.model.geom_friction[geom_id] = [

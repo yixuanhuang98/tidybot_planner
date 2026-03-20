@@ -379,7 +379,7 @@ class MotionPlannerPolicy(Policy):
         
         self.object_to_push_ids = [] #added for push primitive
         self.center_object_id = None #added for push primitive
-        self.gripper_push_open_pos = 0.6 #gripper open position for pushing
+        self.gripper_push_open_pos = 0.4 #gripper open position for pushing
         # Enable policy execution immediately (no web interface required)
         self.enabled = True
         self.episode_ended = False
@@ -455,27 +455,26 @@ class MotionPlannerPolicy(Policy):
                 ])'''
             # Detect objects and plan new command
             if not self.object_to_push_ids and self.center_object_id is None:
-                #get all threee objects
+                # Task uses only cube1 & cube2 (cube3 may exist in MuJoCo but is ignored)
                 all_cubes = []
-                for i in range(1,4):
+                for i in range(1, 3):
                     cube_key = f'cube{i}_pos'
                     if cube_key in obs:
                         cube_pos = obs[cube_key].copy()
                         all_cubes.append((cube_pos, i))
                         print(f"Cube {i} detected at: {cube_pos}")
-                if len(all_cubes) == 3:
-                    #sort by x coordinate and select the middle one as the center object
+                if len(all_cubes) == 2:
+                    # Sort by x: larger-x cube is the cluster target ("center"); push the smaller-x cube toward it
                     all_cubes.sort(key=lambda x: x[0][0])
-                    center_pos, center_id = all_cubes[1] #middle object
+                    center_pos, center_id = all_cubes[1]
                     self.center_object_id = center_id
-                    self.target_location = center_pos.copy() #use existing target location for center
-                    #setup push queue with the other two objects
-                    self.object_to_push_ids = [all_cubes[0][1], all_cubes[2][1]]
-                    print("Initialized push sequence:")
+                    self.target_location = center_pos.copy()
+                    self.object_to_push_ids = [all_cubes[0][1]]
+                    print("Initialized push sequence (2-cube task):")
                     print(f"Center object ID: {self.center_object_id} at {center_pos}")
-                    print(f"Object to push IDs: {self.object_to_push_ids[0]} and {self.object_to_push_ids[1]}")
+                    print(f"Object to push ID: {self.object_to_push_ids[0]}")
                 else:
-                    print(f"Only {len(all_cubes)} objects detected, expected 3")
+                    print(f"Only {len(all_cubes)} task objects detected, expected 2 (cube1 & cube2)")
                     return self.search_for_objects(obs)
 
             if self.object_to_push_ids:
@@ -1273,9 +1272,9 @@ class MotionPlannerPolicy(Policy):
         """Detect objects using ground truth from MuJoCo simulation and find the one with smallest x value"""
         detected_objects = []
         
-        # Get all three cube positions from MuJoCo environment
+        # Task-relevant cubes only (cube1 & cube2; cube3 ignored if present)
         cubes = []
-        for i in range(1, 4):
+        for i in range(1, 3):
             cube_key = f'cube{i}_pos'
             if cube_key in obs:
                 cube_pos = obs[cube_key].copy()
@@ -1381,24 +1380,18 @@ class MotionPlannerPolicy(Policy):
         return {'waypoints': waypoints, 'target_ee_pos': target_ee_pos}
 
     def check_task_success(self, obs):
-        """Check if cubes are in desired positions"""
+        """Check if task cubes (cube1 & cube2) are in desired positions; cube3 is ignored."""
         cube1_pos = obs['cube1_pos']
         cube2_pos = obs['cube2_pos']
-        cube3_pos = obs['cube3_pos']
         
-        # Option 1: Check if all cubes are close together (pushed to same area)
         dist_12 = np.linalg.norm(cube1_pos[:2] - cube2_pos[:2])
-        dist_23 = np.linalg.norm(cube2_pos[:2] - cube3_pos[:2])
-        dist_13 = np.linalg.norm(cube1_pos[:2] - cube3_pos[:2])
         
-        MAX_DISTANCE = 0.12  # 10cm - cubes should be within this distance
-        all_close = (dist_12 < MAX_DISTANCE and 
-                    dist_23 < MAX_DISTANCE and 
-                    dist_13 < MAX_DISTANCE)
-        print(f"Distances: 1-2={dist_12:.3f}m, 2-3={dist_23:.3f}m, 1-3={dist_13:.3f}m")
+        MAX_DISTANCE = 0.12  # cubes should be within this distance
+        all_close = dist_12 < MAX_DISTANCE
+        print(f"Distance 1-2={dist_12:.3f}m (threshold {MAX_DISTANCE:.3f}m)")
 
         if all_close:
-            print(f"✓ Success! Cubes are close together")
+            print(f"✓ Success! Task cubes are close together")
             return True
         
         return False
