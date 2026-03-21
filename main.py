@@ -6,6 +6,8 @@ import time
 from itertools import count
 from constants import POLICY_CONTROL_PERIOD
 from episode_storage import EpisodeWriter
+# MotionPlannerPolicy: task uses MOTION_PLANNER_NUM_TASK_CUBES in policies.py (2 vs 3), or
+# MotionPlannerPolicy(num_task_cubes=3) here for a one-off override.
 from policies import TeleopPolicy, RemotePolicy, MotionPlannerPolicy, ResidualPolicy
 
 def should_save_episode(writer, args):
@@ -128,7 +130,7 @@ def main(args):
         planner = MotionPlannerPolicy()
     else:
         planner = None
-    NUM_EPISODES = 1 # Change this to run more/fewer episodes
+    NUM_EPISODES = 2 # Change this to run more/fewer episodes
     try:
         for episode in range(NUM_EPISODES):
             print(f"\n{'='*50}\nEPISODE {episode + 1}/{NUM_EPISODES}\n{'='*50}")

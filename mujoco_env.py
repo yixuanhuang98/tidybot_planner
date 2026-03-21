@@ -266,7 +266,7 @@ class MujocoSim:
         mujoco.mj_resetData(self.model, self.data)
 
         # Randomize cube sizes and friction
-        cube_size_options = [0.02,0.02,0.02]# [0.013,0.018,0.022]  # ~10mm, 9mm, 11mm cubes
+        cube_size_options = [0.012, 0.014,0.016,0.018,0.02, 0.022]  #[0.02,0.02,0.02]#  ~10mm, 9mm, 11mm cubes
         self.cube_sizes = []  # Store sizes for later use (e.g., Z position)
         self.cube_frictions = []  # Store friction values
         
@@ -307,11 +307,11 @@ class MujocoSim:
         center, left, right = cubes[0], cubes[1], cubes[2]
 
         # 1)center cube（cube1）：
-        center[0] = np.random.uniform(0.5, 0.7)    # x 
-        center[1] = np.random.uniform(-0.4, 0.4)   # y 
+        center[0] = np.random.uniform(0.7, 0.9)    # x 
+        center[1] = np.random.uniform(-0.0, 0.0)   # y 
         # 2) left / small-x cube（cube2）：
-        left[0] = np.random.uniform(0.2, 0.4)
-        left[1] = np.random.uniform(-0.4, 0.4)
+        left[0] = np.random.uniform(0.3, 0.5)
+        left[1] = np.random.uniform(-0.0, 0.0)
         # 3) right / large-x cube（cube3）：
         right[0] = np.random.uniform(0.8, 1.0)
         right[1] = np.random.uniform(-0.4, 0.4)
