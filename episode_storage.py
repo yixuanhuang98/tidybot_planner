@@ -43,6 +43,7 @@ class EpisodeWriter:
         self.initial_sim_state = None
         self.planning_actions = []
         self.save_planning_action = save_planning_action
+        self.fallback_planning_action_count = 0
 
         # Write to disk in separate thread to avoid blocking main thread
         self.flush_thread = None
@@ -53,7 +54,14 @@ class EpisodeWriter:
         self.timestamps.append(time.time())
         self.observations.append(obs)
         self.actions.append(action)
-        if planning_action is not None:
+        if self.save_planning_action:
+            if planning_action is None:
+                # Keep per-step alignment with actions for residual datasets.
+                if len(self.planning_actions) > 0:
+                    planning_action = self.planning_actions[-1]
+                else:
+                    planning_action = action
+                self.fallback_planning_action_count += 1
             self.planning_actions.append(planning_action)
 
     def set_initial_sim_state(self, sim_state):
@@ -90,6 +98,7 @@ class EpisodeWriter:
             'actions': self.actions,
         }
         if self.save_planning_action:
+            assert len(self.planning_actions) == len(self.actions)
             data_to_save['planning_actions'] = self.planning_actions
 
         if self.initial_sim_state is not None:
@@ -100,6 +109,11 @@ class EpisodeWriter:
 
         num_episodes = len([child for child in self.output_dir.iterdir() if child.is_dir()])
         print(f'Saved episode to {self.episode_dir} ({num_episodes} total)')
+        if self.save_planning_action and self.fallback_planning_action_count > 0:
+            print(
+                f'Warning: used planning_action fallback on {self.fallback_planning_action_count} steps '
+                f'for {self.episode_dir.name}'
+            )
 
     def flush_async(self):
         print('Saving successful episode to disk...')

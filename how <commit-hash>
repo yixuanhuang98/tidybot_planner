@@ -1,0 +1,29 @@
+[33mdbee30e[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mRIL[m[33m)[m simple validation task (straight line with various size)
+[33m72dae82[m restore the cube size, location and friction
+[33mb164e71[m residual data collection and inference + resotre cube status
+[33m22dd54a[m adjustable frction and cube size with stat tool
+[33mbaa13e6[m added for change size of box
+[33m8cda1da[m[33m ([m[1;31morigin/RIL[m[33m)[m increase loop time to 3000 count
+[33m94e3bc2[m add griper push pos
+[33ma449500[m add push function
+[33m06abf73[m test1
+[33m626aef6[m[33m ([m[1;31morigin/basic_mp[m[33m, [m[1;32mbasic_mp[m[33m)[m update hdf5
+[33me3dde88[m update random initial start with rejection sampling.
+[33m16fbc5e[m add data loading scripts
+[33m9747a21[m update hdf5 to enable quaternion, language, and max_episodes savings.
+[33m4c7f3ac[m add language to hdf5
+[33m11693f7[m udpate video format
+[33md586092[m change the demo to grasp the red objects only
+[33m6888e8b[m update to new tidybot with new xml, policy, and data saving
+[33mc93510d[m update policy for test
+[33m014bc7a[m update object poses for policy evaluations
+[33md5dde81[m add disable webinterface when evaluations in sim
+[33m3f0e5d3[m update
+[33m9b6a8ae[m pick from anywhere and place anywhere
+[33m8e063c9[m udpate comment
+[33md970948[m add the first version of planner for grasp and placement
+[33mc8dd238[m Unpin phoenix6 version to support newer releases
+[33m228303b[m Update README
+[33me0d30ae[m Update README
+[33mb1487b5[m Code release
+[33m727e79d[m Initial commit

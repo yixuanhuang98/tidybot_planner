@@ -99,7 +99,11 @@ def main(input_dir, output_path):
         # Iterate through episodes
         for episode_idx, episode_dir in enumerate(tqdm(episode_dirs)):
             # Load episode data
-            reader = EpisodeReader(episode_dir)
+            try:
+                reader = EpisodeReader(episode_dir)
+            except AssertionError as exc:
+                print(f"Warning: malformed episode {episode_dir}, skipping... ({exc})")
+                continue
 
             # Check if planning_actions exist
             has_planning = reader.planning_actions is not None

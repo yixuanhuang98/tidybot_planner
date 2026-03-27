@@ -130,7 +130,7 @@ def main(args):
         planner = MotionPlannerPolicy()
     else:
         planner = None
-    NUM_EPISODES = 2 # Change this to run more/fewer episodes
+    NUM_EPISODES = 1 # Change this to run more/fewer episodes
     try:
         for episode in range(NUM_EPISODES):
             print(f"\n{'='*50}\nEPISODE {episode + 1}/{NUM_EPISODES}\n{'='*50}")
