@@ -2,8 +2,8 @@
 # Date: October 2024
 
 import argparse
+import sys
 import time
-from itertools import count
 from pathlib import Path
 import cv2 as cv
 from constants import POLICY_CONTROL_PERIOD
@@ -52,17 +52,48 @@ def main(args):
         from real_env import RealEnv
         env = RealEnv()
 
+    input_path = Path(args.input).expanduser().resolve()
+
     try:
-        episode_dirs = sorted([child for child in Path(args.input_dir).iterdir() if child.is_dir()])
-        for episode_dir in episode_dirs:
-            replay_episode(env, episode_dir, show_images=args.show_images, execute_obs=args.execute_obs)
-            # input('Press <Enter> to continue...')
+        if args.mode == 'folder':
+            if not input_path.is_dir():
+                print(f'folder mode: --input must be a directory: {input_path}', file=sys.stderr)
+                sys.exit(1)
+            episode_dirs = sorted([child for child in input_path.iterdir() if child.is_dir()])
+            for episode_dir in episode_dirs:
+                replay_episode(env, episode_dir, show_images=args.show_images, execute_obs=args.execute_obs)
+        else:
+            if not input_path.is_file():
+                print(f'file mode: --input must be a file: {input_path}', file=sys.stderr)
+                sys.exit(1)
+            if input_path.name != 'data.pkl':
+                print(
+                    'file mode: --input must be the episode data.pkl '
+                    f'(same directory holds *.mp4 image keys). Got: {input_path.name}',
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            replay_episode(env, input_path.parent, show_images=args.show_images, execute_obs=args.execute_obs)
     finally:
         env.close()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input-dir', default='data/demos')
+    parser.add_argument(
+        '--mode',
+        choices=['folder', 'file'],
+        default='folder',
+        help='folder: replay every episode subdirectory under --input; '
+        'file: replay a single episode via path to its data.pkl',
+    )
+    parser.add_argument(
+        '-i',
+        '--input',
+        '--input-dir',
+        dest='input',
+        default='data/demos',
+        help='folder mode: parent directory of episode folders; file mode: path to that episode\'s data.pkl',
+    )
     parser.add_argument('--sim', action='store_true')
     parser.add_argument('--show-images', action='store_true')
     parser.add_argument('--execute-obs', action='store_true')

@@ -15,8 +15,11 @@ import h5py
 import numpy as np
 from scipy.spatial.transform import Rotation
 from tqdm import tqdm
-from constants import POLICY_IMAGE_WIDTH, POLICY_IMAGE_HEIGHT
+from constants import EE_Z_OFFSET_ARM_TO_WORLD_Z, POLICY_IMAGE_WIDTH, POLICY_IMAGE_HEIGHT
 from episode_storage import EpisodeReader
+
+# If set (e.g. 0.4): obs/planning_action last dim is this; delta gripper = gt - this. Set to None for raw planning gripper.
+PLANNING_GRIPPER_POS_OVERRIDE = None#0.4
 
 
 def quat_to_rotation_6d(quat):
@@ -65,7 +68,10 @@ def compute_delta_action(gt_action, planning_action):
     # Non-rotation parts: direct subtraction
     delta_base_pose = gt_action['base_pose'] - planning_action['base_pose']  # 3D
     delta_arm_pos = gt_action['arm_pos'] - planning_action['arm_pos']        # 3D
-    delta_gripper = gt_action['gripper_pos'] - planning_action['gripper_pos']  # 1D
+    if PLANNING_GRIPPER_POS_OVERRIDE is not None:
+        delta_gripper = np.asarray(gt_action['gripper_pos'], dtype=np.float64) - PLANNING_GRIPPER_POS_OVERRIDE
+    else:
+        delta_gripper = gt_action['gripper_pos'] - planning_action['gripper_pos']  # 1D
     
     # Rotation part: compute proper rotation difference
     # R_delta = R_gt * R_plan.inv()
@@ -87,70 +93,85 @@ def _get_cube_keys(observation):
     return sorted([k for k in observation.keys() if k.startswith('cube') and k.endswith('_pos')])
 
 
-def compute_residual_mask(
-    observations,
-    ee_cube_dist_thresh=0.11,
-    cube_motion_thresh=0.003,
-    ee_cube_top_z_thresh=0.0,
-):
-    """Mask residual learning to contact/push-relevant windows.
+def _max_cube_xy_step(obs_prev, obs_curr, cube_keys):
+    """Max XY displacement of any cube between two observations."""
+    if not cube_keys:
+        return 0.0
+    motions = []
+    for cube_key in cube_keys:
+        if cube_key in obs_prev and cube_key in obs_curr:
+            dxy = np.asarray(obs_curr[cube_key][:2], dtype=np.float64) - np.asarray(
+                obs_prev[cube_key][:2], dtype=np.float64
+            )
+            motions.append(float(np.linalg.norm(dxy)))
+    return max(motions) if motions else 0.0
 
-    A step is active if either:
-    - end-effector is near any cube in XY plane, or
-    - any cube moves noticeably between current and next observation.
-    """
+
+def compute_residual_mask_diagnostics(
+    observations,
+    z_diff_max,
+    acc_move_max,
+    ee_z_offset_arm_to_world=EE_Z_OFFSET_ARM_TO_WORLD_Z,
+):
+    """Same rules as ``compute_residual_mask``; also returns z_diff and acc traces for tooling."""
     num_steps = len(observations)
     if num_steps == 0:
-        return np.zeros((0,), dtype=np.float32)
+        z = np.zeros((0,), dtype=np.float64)
+        a = np.zeros((0,), dtype=np.float64)
+        return np.zeros((0,), dtype=np.float32), z, a
 
     cube_keys = _get_cube_keys(observations[0])
     mask = np.zeros((num_steps,), dtype=np.float32)
+    z_trace = np.empty(num_steps, dtype=np.float64)
+    acc_trace = np.empty(num_steps, dtype=np.float64)
+    acc = 0.0
+    t_start = None
     for t in range(num_steps):
         obs_t = observations[t]
         arm_pos = obs_t.get('arm_pos', None)
-
-        near_cube = False
+        z_diff = float("inf")
         if arm_pos is not None and cube_keys:
-            arm_xy = np.asarray(arm_pos[:2], dtype=np.float64)
-            ee_z = float(np.asarray(arm_pos, dtype=np.float64)[2])
-
-            cube_dists = []
-            z_diffs = []
+            ee_z_world = float(np.asarray(arm_pos, dtype=np.float64)[2]) + float(ee_z_offset_arm_to_world)
             for cube_key in cube_keys:
                 if cube_key in obs_t:
-                    cube_pos = np.asarray(obs_t[cube_key], dtype=np.float64)
-                    cube_xy = cube_pos[:2]
-                    cube_dists.append(np.linalg.norm(arm_xy - cube_xy))
-                    # Approximate cube top from center z. In this env cube center z ~= cube half-size.
-                    cube_top = 2.0 * float(cube_pos[2])
-                    z_diffs.append(ee_z - cube_top)
+                    cube_top = 2.0 * float(np.asarray(obs_t[cube_key], dtype=np.float64)[2])
+                    z_diff = min(z_diff, ee_z_world - cube_top)
 
-            # Only consider XY-nearest cube when EE is below all cube tops.
-            if cube_dists and z_diffs and max(z_diffs) < ee_cube_top_z_thresh:
-                near_cube = min(cube_dists) <= ee_cube_dist_thresh
+        z_ok = z_diff < z_diff_max
+        if t_start is None and z_ok:
+            t_start = t
+        if t_start is not None and t > t_start:
+            acc += _max_cube_xy_step(observations[t - 1], observations[t], cube_keys)
 
-        cube_moving = False
-        if t < num_steps - 1 and cube_keys:
-            obs_tp1 = observations[t + 1]
-            cube_motion = []
-            for cube_key in cube_keys:
-                if cube_key in obs_t and cube_key in obs_tp1:
-                    dxy = np.asarray(obs_tp1[cube_key][:2], dtype=np.float64) - np.asarray(obs_t[cube_key][:2], dtype=np.float64)
-                    cube_motion.append(np.linalg.norm(dxy))
-            if cube_motion:
-                cube_moving = max(cube_motion) >= cube_motion_thresh
-
-        if near_cube or cube_moving:
+        z_trace[t] = z_diff
+        acc_trace[t] = acc
+        if z_ok and acc <= acc_move_max:
             mask[t] = 1.0
+    return mask, z_trace, acc_trace
+
+
+def compute_residual_mask(
+    observations,
+    z_diff_max,
+    acc_move_max,
+    ee_z_offset_arm_to_world=EE_Z_OFFSET_ARM_TO_WORLD_Z,
+):
+    """mask=1 while z_diff < z_diff_max and cumulative cube XY travel <= acc_move_max.
+
+    z_diff = min_c (EE_z_world - cube_top_c); cube_top = 2 * cube_z.
+    acc = sum of max cube XY steps only after the first timestep with z_diff < z_diff_max.
+    """
+    mask, _, _ = compute_residual_mask_diagnostics(
+        observations, z_diff_max, acc_move_max, ee_z_offset_arm_to_world
+    )
     return mask
 
 
 def main(
     input_dir,
     output_path,
-    ee_cube_dist_thresh,
-    cube_motion_thresh,
-    ee_cube_top_z_thresh,
+    z_diff_max,
+    acc_move_max,
     zero_delta_outside_mask,
 ):
     # Get list of episode dirs
@@ -163,6 +184,9 @@ def main(
     # Convert to robomimic HDF5 format
     with h5py.File(output_path, 'w') as f:
         data_group = f.create_group('data')
+        data_group.attrs['conversion_input_dir'] = str(Path(input_dir).resolve())
+        data_group.attrs['residual_mask_z_diff_max'] = float(z_diff_max)
+        data_group.attrs['residual_mask_acc_move_max'] = float(acc_move_max)
         valid_episode_count = 0
 
         # Iterate through episodes
@@ -200,13 +224,18 @@ def main(
 
             # Extract planning_actions (13D with rotation_6d) and add to observations
             # Using 13D so it matches the model output dimension at inference time
-            planning_actions = [action_dict_to_array_13d(pa) for pa in reader.planning_actions[:num_steps]]
+            planning_actions = []
+            for pa in reader.planning_actions[:num_steps]:
+                pa_13 = action_dict_to_array_13d(pa)
+                if PLANNING_GRIPPER_POS_OVERRIDE is not None:
+                    pa_13 = pa_13.copy()
+                    pa_13[-1] = PLANNING_GRIPPER_POS_OVERRIDE
+                planning_actions.append(pa_13)
             observations['planning_action'] = planning_actions
             residual_mask = compute_residual_mask(
                 reader.observations[:num_steps],
-                ee_cube_dist_thresh=ee_cube_dist_thresh,
-                cube_motion_thresh=cube_motion_thresh,
-                ee_cube_top_z_thresh=ee_cube_top_z_thresh,
+                z_diff_max=z_diff_max,
+                acc_move_max=acc_move_max,
             )
             observations['residual_mask'] = residual_mask
 
@@ -230,13 +259,16 @@ def main(
                 episode_group.create_dataset(f'obs/{k}', data=np.array(v))
             episode_group.create_dataset('actions', data=np.array(delta_actions))
             episode_group.attrs['residual_active_ratio'] = float(np.mean(residual_mask))
+            # Provenance: map demo_* back to the pickle/MP4 episode folder (sorted input_dir).
+            episode_group.attrs['source_episode_dir'] = str(episode_dir.resolve())
+            episode_group.attrs['source_episode_name'] = episode_dir.name
             valid_episode_count += 1
 
         print(f"\nSaved to {output_path}")
         print(f"Total episodes: {valid_episode_count}")
         print(f"Action (delta) dimension: 10 (axis_angle, auto-converted to 13 during training)")
         print(f"Planning_action dimension: 13 (rotation_6d, same as model output)")
-        print("Added obs/residual_mask: 1=contact/push window, 0=outside window")
+        print("Added obs/residual_mask: 1=z_diff<z_diff_max & acc<=acc_move_max")
         print(f"Rotation delta: R_delta = R_gt * R_plan.inv() (mathematically correct)")
 
 
@@ -244,16 +276,24 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--input-dir', default='data/residual_demos')
     parser.add_argument('--output-path', default='data/residual_demos.hdf5')
-    parser.add_argument('--ee-cube-dist-thresh', type=float, default=0.11)
-    parser.add_argument('--cube-motion-thresh', type=float, default=0.003)
-    parser.add_argument('--ee-cube-top-z-thresh', type=float, default=0.0)
+    parser.add_argument(
+        '--z-diff-max',
+        type=float,
+        default=0.05,
+        help='mask when min_c(EE_z - cube_top) < this (meters)',
+    )
+    parser.add_argument(
+        '--acc-move-max',
+        type=float,
+        default=0.1,
+        help='mask only while cumulative max cube XY step sum <= this (meters)',
+    )
     parser.add_argument('--zero-delta-outside-mask', action='store_true')
     args = parser.parse_args()
     main(
         args.input_dir,
         args.output_path,
-        args.ee_cube_dist_thresh,
-        args.cube_motion_thresh,
-        args.ee_cube_top_z_thresh,
+        args.z_diff_max,
+        args.acc_move_max,
         args.zero_delta_outside_mask,
     )

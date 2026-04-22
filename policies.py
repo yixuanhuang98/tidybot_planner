@@ -1459,6 +1459,12 @@ class ResidualPolicy(RemotePolicy):
     - Non-rotation: direct addition
     - Rotation: R_final = R_delta * R_plan (proper rotation composition)
     """
+    # True: use planning only for that component (no delta). False: planning + delta as usual.
+    IGNORE_RESIDUAL_BASE_POS = False
+    IGNORE_RESIDUAL_ARM_POS = False
+    IGNORE_RESIDUAL_GRIPPER_POS = False
+    IGNORE_RESIDUAL_ARM_QUAT = False
+
     def __init__(self, enable_web_server=True):
         super().__init__(enable_web_server=enable_web_server)
         self.planner = MotionPlannerPolicy()
@@ -1466,6 +1472,9 @@ class ResidualPolicy(RemotePolicy):
     def reset(self):
         super().reset()
         self.planner.reset()
+
+    def print_final_stats(self):
+        self.planner.print_final_stats()
 
     def _step(self, obs):
         # 1. Get planning action from planner
@@ -1515,18 +1524,23 @@ class ResidualPolicy(RemotePolicy):
         - Non-rotation parts: direct addition
         - Rotation: R_final = R_delta * R_plan
         """
-        # Non-rotation: direct addition
-        final_base_pose = planning_action['base_pose'] + delta_action['base_pose']
-        final_arm_pos = planning_action['arm_pos'] + delta_action['arm_pos']
+        # Non-rotation: planning + delta; IGNORE_* uses coeff 0 on delta (same as planning only)
+        mb = 1.0 - ResidualPolicy.IGNORE_RESIDUAL_BASE_POS
+        ma = 1.0 - ResidualPolicy.IGNORE_RESIDUAL_ARM_POS
+        mg = 1.0 - ResidualPolicy.IGNORE_RESIDUAL_GRIPPER_POS
+        final_base_pose = planning_action['base_pose'] + delta_action['base_pose'] * mb
+        final_arm_pos = planning_action['arm_pos'] + delta_action['arm_pos'] * ma
         final_gripper = np.clip(
-            planning_action['gripper_pos'] + delta_action['gripper_pos'],
-            0.0, 1.0
+            planning_action['gripper_pos'] + delta_action['gripper_pos'] * mg, 0.0, 1.0
         )
 
-        # Rotation: R_final = R_delta * R_plan
+        # Rotation: R_final = R_delta * R_plan (or planning only if IGNORE_RESIDUAL_ARM_QUAT)
         R_plan = R.from_quat(planning_action['arm_quat'])
-        R_delta = R.from_quat(delta_action['arm_quat'])
-        R_final = R_delta * R_plan
+        if ResidualPolicy.IGNORE_RESIDUAL_ARM_QUAT:
+            R_final = R_plan
+        else:
+            R_delta = R.from_quat(delta_action['arm_quat'])
+            R_final = R_delta * R_plan
         final_quat = R_final.as_quat()  # [x, y, z, w]
         if final_quat[3] < 0.0:
             np.negative(final_quat, out=final_quat)

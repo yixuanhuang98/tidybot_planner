@@ -58,16 +58,24 @@ def run_episode(env, policy, writer=None, args=None, planner=None):
         # Get action from main policy (teleop or other)
         action = policy.step(obs)
         # print('action', action)
-        # Get planning action if in residual mode
+        # Planning action for logging: separate planner (residual) or same as executed (motion_planner).
         planning_action = None
         if planner is not None and isinstance(action, dict):
             planning_action = planner._step(obs)
+        elif (
+            args is not None
+            and args.motion_planner
+            and isinstance(action, dict)
+        ):
+            # MotionPlannerPolicy is the policy; there is no separate planner._step. Use the
+            # executed command as planning so EpisodeWriter does not repeat a stale plan per step.
+            planning_action = action
 
         # No action if teleop not enabled
         if action is None:
             continue
 
-        if step_idx > 3000:
+        if step_idx > 200:
             break # avoid infinite loop
         
         # Execute valid action on robot
@@ -130,14 +138,17 @@ def main(args):
         planner = MotionPlannerPolicy()
     else:
         planner = None
-    NUM_EPISODES = 1 # Change this to run more/fewer episodes
+    NUM_EPISODES = 100 # Change this to run more/fewer episodes
     try:
         for episode in range(NUM_EPISODES):
             print(f"\n{'='*50}\nEPISODE {episode + 1}/{NUM_EPISODES}\n{'='*50}")
-            writer = EpisodeWriter(args.output_dir, save_planning_action=args.residual) if args.save else None
+            writer = EpisodeWriter(
+                args.output_dir,
+                save_planning_action=args.residual or args.motion_planner,
+            ) if args.save else None
             run_episode(env, policy, writer, args, planner=planner)
     finally:
-        if args.motion_planner:
+        if args.residual_infer or args.motion_planner:
             policy.print_final_stats()
         env.close()
 

@@ -31,3 +31,8 @@ POLICY_CONTROL_FREQ = 10
 POLICY_CONTROL_PERIOD = 1.0 / POLICY_CONTROL_FREQ
 POLICY_IMAGE_WIDTH = 84
 POLICY_IMAGE_HEIGHT = 84
+
+# MuJoCo tidybot: pinch site world Z after undoing sim transform is arm_pos[2] + this offset
+# (matches mujoco_env.MujocoSim.base_height = model.body('gen3/base_link').pos[2]).
+# Cube positions in obs are world frame; use this so EE_z and cube_top are both in world Z (m).
+EE_Z_OFFSET_ARM_TO_WORLD_Z = 0.3948
